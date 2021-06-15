@@ -1,12 +1,7 @@
 # TESS_Cycle3
----
-Caleb Harada (_charada@berkeley.edu_)
 
-Andy Mayo
+**Caleb Harada (_charada@berkeley.edu_), Andy Mayo, Courtney Dressing**
 
-Courtney Dressing
-
----
 
 Repo for code used for TESS Cycle 3 science.
 
