@@ -1,7 +1,9 @@
 # TESS_Cycle3
 ---
 Caleb Harada (_charada@berkeley.edu_)
+
 Andy Mayo
+
 Courtney Dressing
 
 ---
