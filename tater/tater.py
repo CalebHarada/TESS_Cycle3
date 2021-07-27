@@ -23,9 +23,10 @@ from pandas import DataFrame
 from scipy.interpolate import LinearNDInterpolator
 from scipy.optimize import minimize
 from scipy.stats import linregress
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, medfilt
 from scipy.special import erfcinv
 from lightkurve import search_lightcurve
+from transitleastsquares import transitleastsquares, transit_mask, cleaned_array
 from astropy.timeseries import BoxLeastSquares
 from astroquery.mast import Catalogs
 from astroquery.vizier import Vizier
@@ -63,16 +64,12 @@ class TransitFitter(object):
 
         # initialize some variables
         self.tic_id = "TIC {}".format(tic_id)
-        self.labels = ["$T_0$", "$r_p/R_*$", "$a/R_*$", "$b$"]
+        self.labels = ["$P$", "$T_0$", "$r_p/R_*$", "$a/R_*$", "$b$"]
 
-        # initialize BLS arrays
-        self.period_grid = None
-        self.bls_rs = np.array([])
-        self.bls_durs = np.array([])
-        self.bls_t0s = np.array([])
-        self.bls_depths = np.array([])
-        self.TCEs = None
+        # initialize
+        self.TCEs = []
         self.planet_candidates = []
+        self.fit_results = []
 
         # initialize stellar params
         self.R_star = None
@@ -89,20 +86,19 @@ class TransitFitter(object):
         self.f_raw = None
         self.ferr_raw = None
         self.time = np.array([])
-        self.f500 = np.array([])
-        self.f1000 = np.array([])
-        self.f2000 = np.array([])
+        self.f = np.array([])
         self.f_err = np.array([])
+        self.trend = np.array([])
 
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 15
-        self.nsteps = 2500
-        self.nburn = 1500
+        self.nsteps = 10000
+        self.nburn = 5000
 
 
 
-    def download_data(self, plot=False):
+    def download_data(self, plot=True):
         """Function to download and flatten raw light curve data"""
 
         # get stellar params
@@ -117,12 +113,22 @@ class TransitFitter(object):
                                                                     sector.remove_nans().flux.value,
                                                                     sector.remove_nans().flux_err.value
                                                                     ) for sector in self.lc], axis=1)
-
+        
         if plot:
-            self.lc.plot()
 
-        # flatten
-        for lc in tqdm(self.lc, desc="   flattening light curve"):
+            fig, axes = plt.subplots(2, 1,
+                                    figsize=(10, 8),
+                                    sharex=True,
+                                    gridspec_kw=dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
+                                )
+
+            axes[0].set_title(self.tic_id)
+            axes[0].set_ylabel("Flux")
+            axes[1].set_xlabel("Time (days)")
+            axes[1].set_ylabel("Relative flux")
+
+        # flatten !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        for lc in tqdm(self.lc[:1], desc="   flattening light curve"):
             
             time = lc.remove_nans().time.value
             flux = lc.remove_nans().flux.value
@@ -130,59 +136,83 @@ class TransitFitter(object):
             
             self.time = np.concatenate((self.time, time))
             self.f_err = np.concatenate((self.f_err, flux_err/flux))
-            
-            # window lengths in minutes: 500, 1000, 2000
-            for w in [500, 1000, 2000]:
-                window = w / 1440.
-                flatten_lc, _ = flatten(
-                    time,                  # Array of time values
-                    flux,                  # Array of flux values
-                    method='trim_mean',
-                    window_length=window,  # The length of the filter window in units of ``time``
-                    edge_cutoff=window/2,  # length (in units of time) to be cut off each edge.
-                    return_trend=True,     # Return trend and flattened light curve
-                    proportiontocut=0.023  # Cut 2.3% off both ends (clip above 2-sigma)
-                    )
+
+            flatten_lc, trend_lc = flatten(
+                                    time,                 # Array of time values
+                                    flux,                 # Array of flux values
+                                    method='median',
+                                    window_length=1.0,    # The length of the filter window in units of ``time``
+                                    edge_cutoff=0.5,      # length (in units of time) to be cut off each edge.
+                                    break_tolerance=0.5,  # Split into segments at breaks longer than that
+                                    return_trend=True     # Return trend and flattened light curve
+                                )
                 
-                if w==500:
-                    self.f500 = np.concatenate((self.f500, flatten_lc))
-                elif w==1000:
-                    self.f1000 = np.concatenate((self.f1000, flatten_lc))
-                elif w==2000:
-                    self.f2000 = np.concatenate((self.f2000, flatten_lc))
-        
+            self.f = np.concatenate((self.f, flatten_lc))
+            self.trend = np.concatenate((self.trend, trend_lc))
+
+            if plot:
+
+                axes[0].scatter(time, flux, c='k', s=1, alpha=0.2)
+                axes[0].plot(time, trend_lc, "b-", lw=2)
+                axes[1].scatter(time, flatten_lc, c='k', s=1, alpha=0.2)
+
+        if plot:
+            plt.show()
+
         print("   done.")
 
         return None
 
 
 
-    def find_planets(self, method="bls"):
+    def find_planets(self):
         """Funtion to identify planets"""
 
-        if not method in ["bls", "tls"]:
-            raise ValueError("Transit finding 'method' ('{}') must be either 'bls' or 'tls'.".format(method))
-
-        if method == "bls":
-            TCEs = self._bls_search_()
+        TCEs = self._tls_search_()
 
         print("   vetting TCEs...") # see Zink+2020
 
         # previous planet check
         TCEs = self._vet_previous_planets_(TCEs)
-
-        # alias check
-        TCEs = self._vet_alias_periods_(TCEs)
-
-
+        
         for TCE in TCEs:
-            if TCE["FP"] == False:
+            if TCE.FP == False:
                 self.planet_candidates.append(TCE)
 
-        print("   vetting recovered {} planet candidates from {} TCEs.".format(len(self.planet_candidates), len(self.TCEs)))
+        print("   vetting recovered {} planet candidate(s) from {} TCE(s).".format(len(self.planet_candidates), len(self.TCEs)))
 
         return self.planet_candidates
 
+
+
+    def fit_transits(self):
+        """Function to perform MCMC fit"""
+
+        if not len(self.planet_candidates) >= 1:
+            raise ValueError("No planet candidates were found.")
+            return None
+
+
+        for candidate in self.planet_candidates:
+
+            print("   Running MCMC for planet candidate with $P = {:.6f}$ days (SDE={:.6f})".format(candidate.period, candidate.SDE))
+
+            theta_0 = dict(per=candidate.period,
+                t0=candidate.T0,
+                rp_rs=candidate.rp_rs,
+                a_rs=self._P_to_a_(candidate.period),
+                b=0.1
+                )
+
+            intransit = transit_mask(self.time, candidate.period, 3*candidate.duration, candidate.T0)
+
+            time, flux, flux_err = cleaned_array(self.time[intransit], self.f[intransit], self.f_err[intransit])
+
+            planet_fit = self._execute_mcmc_(theta_0, time, flux, flux_err, show_plots=True)
+            #self.fit_results.append(planet_fit)
+            candidate.fit_results = planet_fit
+
+        return self.planet_candidates
 
         
 
@@ -191,141 +221,82 @@ class TransitFitter(object):
 
 
 
+    def _tls_search_(self, show_plots=True):
+        """Function to run TLS planet search"""
 
+        time = self.time
+        flux = self.f
+        flux_err = self.f_err
 
+        period_max = np.ptp(time) / 3   # at least 3 transits
+        if period_max > 60:
+            period_max = 60
 
+        intransit = np.zeros(len(time), dtype="bool")
 
+        for i in range(6):
 
+            time, flux, flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
 
-    def _bls_search_(self):
-        """Function to search for transits using BLS"""
+            #plt.figure()
+            #plt.scatter(time, flux, c='k', s=1, alpha=0.2)
+            #plt.show()
 
-        # max period is the minimum of 100 days, or 1/3 of the total duration of observations
-        max_period = np.min([100., (self.time.max() - self.time.min()) / 3])
-        self.period_grid = np.logspace(np.log10(0.5), np.log10(max_period), 12000)
-
-        # split period grid into 12 sections
-        for period_interval in tqdm(np.split(self.period_grid, 12), desc="   running BLS"):
-
-            min_dur = self._estimate_duration_(period_interval.min()) / 15.
-            max_dur = self._estimate_duration_(period_interval.max())
-            dur_interval = np.linspace(min_dur, max_dur, 20)
-
-            # choose smoothing filter based on transit duration
-            time = self.time[np.isfinite(self.f2000)]
-            flux = self.f2000[np.isfinite(self.f2000)]
-            flux_err = self.f_err[np.isfinite(self.f2000)]
-
-            if (max_dur * 1440) < 200:
-
-                if (max_dur * 1440) < 50:
-                    #print("   (selecting smoothing window of 500)")
-                    time = self.time[np.isfinite(self.f500)]
-                    flux = self.f500[np.isfinite(self.f500)]
-                    flux_err = self.f_err[np.isfinite(self.f500)]
-
-                elif (max_dur * 1440) < 100:
-                    #print("   (selecting smoothing window of 1000)")
-                    time = self.time[np.isfinite(self.f1000)]
-                    flux = self.f1000[np.isfinite(self.f1000)]
-                    flux_err = self.f_err[np.isfinite(self.f1000)]
-
-            # do BLS
-            bls = BoxLeastSquares(time, flux, dy=flux_err)
-            bls_result = bls.power(period_interval, dur_interval)
-
-            self.bls_rs = np.concatenate((self.bls_rs, bls_result.power))
-            self.bls_durs = np.concatenate((self.bls_durs, bls_result.duration))
-            self.bls_t0s = np.concatenate((self.bls_t0s, bls_result.transit_time))
-            self.bls_depths = np.concatenate((self.bls_depths, bls_result.depth))
-
-        # anonymous functions
-        nll = lambda *args: -self._log_likelihood_min_(*args)
-        chi_square = lambda O, E, sigma : np.sum( np.square((O - E) / sigma) )
-
-        # find significant peaks
-        TCEs = []   # empty list to store Treshold Crossing Events (SDE > 6)
-        peak_inds = find_peaks(self.bls_rs, prominence=(self.bls_rs.max() - self.bls_rs.min()) / 10)[0]
-        for i in tqdm(peak_inds, desc="   identifying TCEs"):
-
-            # signal detection efficiency (SDE)
-            SDE = (self.bls_rs[i] - np.mean(self.bls_rs)) / np.std(self.bls_rs)
-
-            if SDE > 6.0:
-
-                bls_stats = bls.compute_stats(self.period_grid[i], self.bls_durs[i], self.bls_t0s[i])
-
-                # check if there are at leaast 3 transits
-                if (len(bls_stats["transit_times"]) >= 3):
-
-                    # choose smoothing filter based on transit duration
-                    time = self.time[np.isfinite(self.f2000)]
-                    flux = self.f2000[np.isfinite(self.f2000)]
-                    flux_err = self.f_err[np.isfinite(self.f2000)]
-
-                    if (self.bls_durs[i] * 1440) < 200:
-
-                        if (self.bls_durs[i] * 1440) < 50:
-                            #print("   (selecting smoothing window of 500)")
-                            time = self.time[np.isfinite(self.f500)]
-                            flux = self.f500[np.isfinite(self.f500)]
-                            flux_err = self.f_err[np.isfinite(self.f500)]
-
-                        elif (self.bls_durs[i] * 1440) < 100:
-                            #print("   (selecting smoothing window of 1000)")
-                            time = self.time[np.isfinite(self.f1000)]
-                            flux = self.f1000[np.isfinite(self.f1000)]
-                            flux_err = self.f_err[np.isfinite(self.f1000)]
-
-                    # find max liklihood model
-                    initial = np.array([self.bls_t0s[i], np.sqrt(self.bls_depths[i]), self._P_to_a_(self.period_grid[i]), 0.0])
-
-                    soln = minimize(nll, initial, args=(self.period_grid[i], time, flux, flux_err))
-
-                    t0_ml, rp_ml, a_ml, b_ml = soln.x
-
-                    # compute best model
-                    batman_params = batman.TransitParams()
-                    inc = np.arccos(b_ml / a_ml) * (180 / np.pi)
-                    batman_params.t0 = t0_ml                       # time of inferior conjunction
-                    batman_params.per = self.period_grid[i]        # orbital period
-                    batman_params.rp = rp_ml                       # planet radius (in units of stellar radii)
-                    batman_params.a = a_ml                         # semi-major axis (in units of stellar radii)
-                    batman_params.inc = inc                        # orbital inclination (in degrees)
-                    batman_params.ecc = 0.                         # eccentricity
-                    batman_params.w = 90.                          # longitude of periastron (in degrees)
-                    batman_params.u = [self.u1, self.u2]           # limb darkening coefficients []
-                    batman_params.limb_dark = "quadratic"          # limb darkening model
-
-                    transit_model = batman.TransitModel(batman_params, time)      # initializes model
-                    f_model = transit_model.light_curve(batman_params)            # calculates light curve
-                    chi2_model = chi_square(flux, f_model, flux_err) / (len(time) - 4)         # chi^2 of model
-
-                    TCEs.append(dict(sde=SDE,
-                                        per=self.period_grid[i],
-                                        dur=self.bls_durs[i],
-                                        t0=t0_ml,
-                                        dep=np.square(rp_ml),
-                                        a=a_ml,
-                                        b=b_ml,
-                                        transit_times=bls_stats["transit_times"],
-                                        chi2_r=chi2_model,
-                                        FP=False
-                                    )
+            tls = transitleastsquares(time, flux, flux_err)
+            tls_results = tls.power(
+                                    R_star=self.R_star.value,
+                                    R_star_min=self.R_star.value - 0.3,
+                                    R_star_max=self.R_star.value + 0.3,
+                                    M_star=self.M_star.value,
+                                    M_star_min=self.M_star.value - 0.3,
+                                    M_star_max=self.M_star.value + 0.3,
+                                    u=[self.u1, self.u2],
+                                    period_max=period_max,
+                                    period_min=0.8
                                 )
 
-        #plt.plot(self.period_grid, self.bls_rs)
+            if show_plots:
 
-        # sort TCEs by SDE value
-        self.TCEs = sorted(TCEs, key=lambda d: d['sde'], reverse=True)
+                plt.figure(figsize=(12,8))
+                plt.axhline(7.0, ls="--", c="r", alpha=0.6)
+                plt.axvline(tls_results.period, alpha=0.2, lw=6, c="b")
+                for i in range(2, 15):
+                    plt.axvline(tls_results.period * i, alpha=0.2, lw=1, c="b", ls='--')
+                    plt.axvline(tls_results.period / i, alpha=0.2, lw=1, c="b", ls='--')
+                plt.plot(tls_results.periods, tls_results.power, 'k-', lw=1)
+                plt.xlim([tls_results.periods.min(), tls_results.periods.max()])
+                plt.xlabel("period (days)")
+                plt.ylabel("power")
+                plt.title("Peak at {:.6f} days".format(tls_results.period))
 
-        print("   BLS recovered {} TCEs (SDE > 6).".format(len(self.TCEs)))
+                plt.figure(figsize=(12,8))
+                plt.scatter(tls_results.folded_phase, tls_results.folded_y, s=1, c='k')
+                plt.plot(tls_results.model_folded_phase, tls_results.model_folded_model)
+                plt.title("Preliminary transit model")
+                plt.ticklabel_format(useOffset=False)
+                plt.xlim([0.45, 0.55])
+                plt.xlabel("phase")
+                plt.ylabel("relative flux")
+
+                plt.show()
+
+
+            if tls_results.SDE <= 7.0:
+                print("   No TCEs found above SDE=7.0.")
+                print(" ")
+                break
+
+            print("   TCE found at $P = {:.6f}$ days with SDE of {:.6f}".format(tls_results.period, tls_results.SDE))
+            print(" ")
+
+            # add False Positive keyword to result
+            tls_results.FP = False
+
+            self.TCEs.append(tls_results)
+            intransit = transit_mask(time, tls_results.period, 2.5*tls_results.duration, tls_results.T0)
+
 
         return self.TCEs
-
-
-
-
 
 
 
@@ -335,104 +306,29 @@ class TransitFitter(object):
         for i in tqdm(range(len(TCE_list)), desc="   checking previous signals"):
             for j in range(0, i):
         
-                P_A, P_B = np.sort((TCE_list[i]["per"], TCE_list[j]["per"]))
+                P_A, P_B = np.sort((TCE_list[i].period, TCE_list[j].period))
                 delta_P = (P_B - P_A) / P_A
                 sigma_P = np.sqrt(2) * erfcinv(np.abs(delta_P - round(delta_P)))
 
-                delta_t0 = np.abs(TCE_list[i]["t0"] - TCE_list[j]["t0"]) / TCE_list[i]["dur"]
+                delta_t0 = np.abs(TCE_list[i].T0 - TCE_list[j].T0) / TCE_list[i].duration
 
-                delta_SE1 = np.abs(TCE_list[i]["t0"] - TCE_list[j]["t0"] + TCE_list[i]["per"]/2) / TCE_list[i]["dur"]
+                delta_SE1 = np.abs(TCE_list[i].T0 - TCE_list[j].T0 + TCE_list[i].period/2) / TCE_list[i].duration
 
-                delta_SE2 = np.abs(TCE_list[i]["t0"] - TCE_list[j]["t0"] - TCE_list[i]["per"]/2) / TCE_list[i]["dur"]
+                delta_SE2 = np.abs(TCE_list[i].T0 - TCE_list[j].T0 - TCE_list[i].period/2) / TCE_list[i].duration
 
-                if (sigma_P > 2.5) & (TCE_list[j]["FP"] == True):
-                    TCE_list[i]["FP"] = True
+                if (sigma_P > 2.0) & (TCE_list[j].FP == True):
+                    TCE_list[i].FP = True
                     break
 
-                if (sigma_P > 2.5) & (delta_t0 < 1):
-                    TCE_list[i]["FP"] = True
+                if (sigma_P > 2.0) & (delta_t0 < 1):
+                    TCE_list[i].FP = True
                     break
 
-                elif (sigma_P > 2.5) & ((delta_SE1 < 1) | (delta_SE2 < 1)):
-                    TCE_list[i]["FP"] = True
+                elif (sigma_P > 2.0) & ((delta_SE1 < 1) | (delta_SE2 < 1)):
+                    TCE_list[i].FP = True
                     break
 
         return TCE_list
-
-
-
-    def _vet_alias_periods_(self, TCE_list):
-        """period alias check defined by Zink+2020"""
-
-        for TCE in tqdm(TCE_list, desc="   checking alias periods"):
-
-            if TCE["FP"] == False:
-
-                # choose smoothing filter based on transit duration
-                time = self.time[np.isfinite(self.f2000)]
-                flux = self.f2000[np.isfinite(self.f2000)]
-                flux_err = self.f_err[np.isfinite(self.f2000)]
-
-                if (TCE["dur"] * 1440) < 200:
-
-                    if (TCE["dur"] * 1440) < 50:
-                        time = self.time[np.isfinite(self.f500)]
-                        flux = self.f500[np.isfinite(self.f500)]
-                        flux_err = self.f_err[np.isfinite(self.f500)]
-
-                    elif (TCE["dur"] * 1440) < 100:
-                        time = self.time[np.isfinite(self.f1000)]
-                        flux = self.f1000[np.isfinite(self.f1000)]
-                        flux_err = self.f_err[np.isfinite(self.f1000)]
-
-                # anonymous functions
-                nll = lambda *args: -self._log_likelihood_min_(*args)
-                chi_square = lambda O, E, sigma : np.sum( np.square((O - E) / sigma) )
-
-                chi2_aliases = []
-                for alias_per in (TCE["per"] * np.array([2, 3, 1/2, 1/3])):
-
-                    a = self._P_to_a_(alias_per)
-                    inc = np.arccos(TCE["b"] / a) * (180 / np.pi)
-
-                    # compute model
-                    batman_params = batman.TransitParams()
-                    batman_params.t0 = TCE["t0"]                   # time of inferior conjunction
-                    batman_params.per = alias_per                  # orbital period
-                    batman_params.rp = np.sqrt(TCE["dep"])         # planet radius (in units of stellar radii)
-                    batman_params.a = a                            # semi-major axis (in units of stellar radii)
-                    batman_params.inc = inc                        # orbital inclination (in degrees)
-                    batman_params.ecc = 0.                         # eccentricity
-                    batman_params.w = 90.                          # longitude of periastron (in degrees)
-                    batman_params.u = [self.u1, self.u2]           # limb darkening coefficients []
-                    batman_params.limb_dark = "quadratic"          # limb darkening model
-
-                    transit_model = batman.TransitModel(batman_params, time)      # initializes model
-                    f_model = transit_model.light_curve(batman_params)            # calculates light curve
-                    chi2_model = chi_square(flux, f_model, flux_err) / (len(time) - 4)         # chi^2 of model
-
-                    chi2_aliases.append(chi2_model)
-
-                    """
-                    plt.plot(time, flux, "k.")
-                    plt.plot(time, f_model, "r-", label=chi2_model)
-                    plt.title(alias_per)
-                    plt.legend()
-                    plt.show()
-                    """
-
-                # check that no alias has a higher chi2 than the signal in question
-                if not np.all( TCE["chi2_r"] < np.array(chi2_aliases) ):
-                    TCE["FP"] == True
-
-        return TCE_list
-
-
-
-
-
-
-
 
 
 
@@ -546,5 +442,211 @@ class TransitFitter(object):
         a = ((6.67e-11 * M_star) / (4 * np.pi**2) * (per * 86400.)**2)**(1/3)
         
         return a / R_star
+
+
+
+    def _log_likelihood_(self, theta, x, y, yerr):
+        """Function that returns log-liklihood for MCMC"""
+
+        per, t0, rp, a, b = theta
+            
+        inc = np.arccos(b / a) * (180 / np.pi)
+        
+        params = batman.TransitParams()
+        params.t0 = t0                       # time of inferior conjunction
+        params.per = per                     # orbital period
+        params.rp = rp                       # planet radius (in units of stellar radii)
+        params.a = a                         # semi-major axis (in units of stellar radii)
+        params.inc = inc                     # orbital inclination (in degrees)
+        params.ecc = 0.                      # eccentricity
+        params.w = 90.                       # longitude of periastron (in degrees)
+        params.u = [self.u1, self.u2]        # limb darkening coefficients []
+        params.limb_dark = "quadratic"       # limb darkening model
+        
+        model = batman.TransitModel(params, x)    # initializes model
+        flux_m = model.light_curve(params)        # calculates light curve
+            
+        return -0.5 * np.sum( (y - flux_m)**2 / yerr**2 + np.log(2*np.pi*yerr**2) )
+
+
+
+    def _log_prior_(self, theta, theta_0):
+        """Function that returns log-prior for MCMC"""
+
+        per, t0, rp, a, b = theta
+        
+        if (theta_0["per"] - 0.1 < per < theta_0["per"] + 0.1) \
+        and (theta_0["t0"] - 0.083 < t0 < theta_0["t0"] + 0.083) \
+        and (0.0 < rp < 1.5 * theta_0["rp_rs"]) \
+        and (0.5 * theta_0["a_rs"] < a < 2.0 * theta_0["a_rs"]) \
+        and (0.0 < b < 1.0):
+            return 0.0
+        
+        return -np.inf
+
+
+
+    def _log_probability_(self, theta, theta_0, x, y, yerr):
+        """Function that returns posterior log-probability for MCMC"""
+        
+        lp = self._log_prior_(theta, theta_0)
+        
+        if not np.isfinite(lp):
+            return -np.inf
+        
+        return lp + self._log_likelihood_(theta, x, y, yerr)
+
+
+
+    def _execute_mcmc_(self, theta_0, t, f, f_err, show_plots=False):
+        """Function to run MCMC"""
+
+        np.random.seed(420)
+
+        # initial state
+        pos = np.array([theta_0["per"], theta_0["t0"], theta_0["rp_rs"], theta_0["a_rs"], theta_0["b"]]) \
+                        + 5e-5 * np.random.randn(self.nwalkers, self.ndim)
+
+        # run MCMC
+        sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self._log_probability_, 
+                                        args=(theta_0, t, f, f_err)
+                                        )
+        sampler.run_mcmc(pos, self.nsteps, progress=True)
+
+        
+        flat_samples = sampler.get_chain(discard=self.nburn, flat=True)
+
+        if show_plots:
+
+            samples = sampler.get_chain()
+            self._plot_mcmc_diagnostics_(samples, flat_samples)
+            self._plot_best_fit_(t, f, f_err, flat_samples)
+
+        # package up fit results
+        results_dict = dict(zip(["median", "lower", "upper"], np.quantile(flat_samples, [0.5, 0.16, 0.84], axis=0)))
+        results_df = DataFrame(results_dict, index=self.labels)
+        results_df["(+)"] = results_df["median"] - results_df["lower"]
+        results_df["(-)"] = results_df["upper"] - results_df["median"]
+
+        # add convenient units
+        results_df = results_df.append(
+            DataFrame(
+                dict(zip(results_df.columns, 
+                    np.array(
+                        [(results_df.loc["$r_p/R_*$"].values * self.R_star).to(u.R_earth).value,
+                        (results_df.loc["$r_p/R_*$"].values * self.R_star).to(u.R_jupiter).value,
+                        (results_df.loc["$a/R_*$"].values * self.R_star).to(u.AU).value]).T
+                    )),
+                index=["$r_p$", "$r_p$", "$a$"]
+                )
+            )
+
+        results_df["units"] = ["d", "d", "-", "-", "-", "R_Earth", "R_Jup", "AU"]
+
+        return results_df
+
+
+
+    def _plot_mcmc_diagnostics_(self, samples, flat_samples):
+        """Function for plotting MCMC walkers and posterior distributions in a corner plot"""
+
+        fig, axes = plt.subplots(self.ndim, figsize=(12, 10), sharex=True)
+
+        labels = self.labels
+
+        for i in range(self.ndim):
+            ax = axes[i]
+            ax.plot(samples[self.nburn:, :, i], alpha=0.3)
+            ax.set_xlim(0, len(samples)-self.nburn)
+            ax.set_ylabel(labels[i])
+            ax.yaxis.set_label_coords(-0.1, 0.5)
+
+        axes[-1].set_xlabel("step number")
+
+        _ = corner.corner(flat_samples,
+            labels=labels,
+            quantiles=[0.16, 0.5, 0.84],
+            show_titles=True)
+
+        plt.show()
+
+
+
+
+    def _plot_best_fit_(self, t, f, f_err, flat_samples):
+        """Function for plotting the folded light curve and best-fit model (50 random samples)"""
+
+        gridspec = dict(wspace=0.0, hspace=0.0, height_ratios=[2, 1])
+        fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw=gridspec)   # set up figure
+
+        p_best, t0_best, rp_best, a_best, b_best = np.quantile(flat_samples, 0.5, axis=0)
+
+        # plot folded light curve and models
+        ax = axes[0]
+        ax.set_title(self.tic_id)
+        t_fold = (t - t0_best + 0.5 * p_best) % p_best - 0.5 * p_best
+        ax.errorbar(t_fold, f, yerr=f_err, fmt='k.', ms=1, alpha=0.1)   # plot data
+        ax.plot(t_fold, f, 'k.', ms=1, alpha=0.5)
+        ax.set_ylabel("relative flux")
+        
+        inds = np.random.randint(len(flat_samples), size=50)   # plot 50 random samples
+        for ind in inds:
+            
+            per, t0, rp, a, b = flat_samples[ind]
+                
+            inc = np.arccos(b / a) * (180 / np.pi)
+            
+            params = batman.TransitParams()
+            params.t0 = t0                       # time of inferior conjunction
+            params.per = per                     # orbital period
+            params.rp = rp                       # planet radius (in units of stellar radii)
+            params.a = a                         # semi-major axis (in units of stellar radii)
+            params.inc = inc                     # orbital inclination (in degrees)
+            params.ecc = 0.                      # eccentricity
+            params.w = 90.                       # longitude of periastron (in degrees)
+            params.u = [self.u1, self.u2]        # limb darkening coefficients []
+            params.limb_dark = "quadratic"       # limb darkening model
+            
+            model = batman.TransitModel(params, t)    # initializes model
+            flux_m = model.light_curve(params)                # calculates light curve
+       
+            ax.plot(np.sort(t_fold), flux_m[np.argsort(t_fold)], 'b-', lw=1, alpha=0.5)
+
+        # plot residuals for median "best-fit" model
+        ax = axes[1]
+
+        inc = np.arccos(b_best / a_best) * (180 / np.pi)
+
+        params = batman.TransitParams()
+        params.t0 = t0_best                # time of inferior conjunction
+        params.per = p_best                # orbital period
+        params.rp = rp_best                # planet radius (in units of stellar radii)
+        params.a = a_best                  # semi-major axis (in units of stellar radii)
+        params.inc = inc                   # orbital inclination (in degrees)
+        params.ecc = 0.                    # eccentricity
+        params.w = 90.                     # longitude of periastron (in degrees)
+        params.u = [self.u1, self.u2]      # limb darkening coefficients []
+        params.limb_dark = "quadratic"     # limb darkening model
+
+        model = batman.TransitModel(params, t)    # initializes model
+        flux_m = model.light_curve(params)        # calculates light curve
+
+        ax.errorbar(t_fold, f-flux_m, yerr=f_err, fmt='k.', ms=1, alpha=0.1)   # plot data
+        ax.plot(t_fold, f-flux_m, 'k.', ms=1, alpha=0.5)
+
+        ax.set_xlim([t_fold.min(), t_fold.max()])
+
+        ax.axhline(0.0, color="b", alpha=0.75)
+        
+        ax.set_ylabel("median residuals")
+        ax.set_xlabel("phase")
+        
+        plt.show()
+
+
+
+
+
+
 
 
