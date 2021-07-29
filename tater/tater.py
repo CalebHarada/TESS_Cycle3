@@ -127,7 +127,7 @@ class TransitFitter(object):
         axes[1].set_ylabel("Relative flux")
 
         # flatten !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        for lc in tqdm(self.lc[:5], desc="   flattening light curve"):
+        for lc in tqdm(self.lc[:1], desc="   flattening light curve"):
             
             time = lc.remove_nans().time.value
             flux = lc.remove_nans().flux.value
@@ -622,7 +622,8 @@ class TransitFitter(object):
         ax.plot(t_fold, f, 'k.', ms=1, alpha=0.5)
         ax.set_ylabel("relative flux")
         
-        inds = np.random.randint(len(flat_samples), size=50)   # plot 50 random samples
+        inds = np.random.randint(len(flat_samples), size=100)   # plot 100 random samples
+        t_model = np.sort(t_fold)
         for ind in inds:
             
             per, t0, rp, a, b = flat_samples[ind]
@@ -630,7 +631,7 @@ class TransitFitter(object):
             inc = np.arccos(b / a) * (180 / np.pi)
             
             params = batman.TransitParams()
-            params.t0 = t0                       # time of inferior conjunction
+            params.t0 = 0                        # time of inferior conjunction
             params.per = per                     # orbital period
             params.rp = rp                       # planet radius (in units of stellar radii)
             params.a = a                         # semi-major axis (in units of stellar radii)
@@ -640,10 +641,10 @@ class TransitFitter(object):
             params.u = [self.u1, self.u2]        # limb darkening coefficients []
             params.limb_dark = "quadratic"       # limb darkening model
             
-            model = batman.TransitModel(params, t)    # initializes model
-            flux_m = model.light_curve(params)                # calculates light curve
+            model = batman.TransitModel(params, t_model)      # initializes model
+            flux_model = model.light_curve(params)            # calculates light curve
        
-            ax.plot(np.sort(t_fold), flux_m[np.argsort(t_fold)], 'b-', lw=1, alpha=0.5)
+            ax.plot(t_model, flux_model, 'b-', lw=1, alpha=0.5)
 
         # plot residuals for median "best-fit" model
         ax = axes[1]
@@ -672,7 +673,7 @@ class TransitFitter(object):
         ax.axhline(0.0, color="b", alpha=0.75)
         
         ax.set_ylabel("median residuals")
-        ax.set_xlabel("phase")
+        ax.set_xlabel("phase (days)")
 
         if show_plot:
             plt.show()
