@@ -11,7 +11,7 @@ ensemble sampler to fit a BATMAN transit model to the data.
 # [...]
 
 # Built-in/Generic Imports
-import os, sys
+import os, sys, datetime
 # [...]
 
 # Libs
@@ -19,6 +19,7 @@ import batman, emcee, corner
 import numpy as np
 import astropy.units as u
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 from pandas import DataFrame
 from scipy.interpolate import LinearNDInterpolator
 from scipy.optimize import minimize
@@ -69,7 +70,7 @@ class TransitFitter(object):
         # initialize
         self.TCEs = []
         self.planet_candidates = []
-        self.fit_results = []
+        self.lc_figure = None
 
         # initialize stellar params
         self.R_star = None
@@ -98,7 +99,7 @@ class TransitFitter(object):
 
 
 
-    def download_data(self, plot=True):
+    def download_data(self, show_plot=False):
         """Function to download and flatten raw light curve data"""
 
         # get stellar params
@@ -113,22 +114,20 @@ class TransitFitter(object):
                                                                     sector.remove_nans().flux.value,
                                                                     sector.remove_nans().flux_err.value
                                                                     ) for sector in self.lc], axis=1)
-        
-        if plot:
 
-            fig, axes = plt.subplots(2, 1,
-                                    figsize=(10, 8),
-                                    sharex=True,
-                                    gridspec_kw=dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
-                                )
+        fig, axes = plt.subplots(2, 1,
+                                figsize=(10, 8),
+                                sharex=True,
+                                gridspec_kw=dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
+                            )
 
-            axes[0].set_title(self.tic_id)
-            axes[0].set_ylabel("Flux")
-            axes[1].set_xlabel("Time (days)")
-            axes[1].set_ylabel("Relative flux")
+        axes[0].set_title(self.tic_id)
+        axes[0].set_ylabel("Flux")
+        axes[1].set_xlabel("Time (days)")
+        axes[1].set_ylabel("Relative flux")
 
         # flatten !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        for lc in tqdm(self.lc[:1], desc="   flattening light curve"):
+        for lc in tqdm(self.lc[:5], desc="   flattening light curve"):
             
             time = lc.remove_nans().time.value
             flux = lc.remove_nans().flux.value
@@ -150,13 +149,12 @@ class TransitFitter(object):
             self.f = np.concatenate((self.f, flatten_lc))
             self.trend = np.concatenate((self.trend, trend_lc))
 
-            if plot:
-
-                axes[0].scatter(time, flux, c='k', s=1, alpha=0.2)
-                axes[0].plot(time, trend_lc, "b-", lw=2)
-                axes[1].scatter(time, flatten_lc, c='k', s=1, alpha=0.2)
-
-        if plot:
+            axes[0].scatter(time, flux, c='k', s=1, alpha=0.2)
+            axes[0].plot(time, trend_lc, "b-", lw=2)
+            axes[1].scatter(time, flatten_lc, c='k', s=1, alpha=0.2)
+        
+        self.lc_figure = fig
+        if show_plot:
             plt.show()
 
         print("   done.")
@@ -179,21 +177,21 @@ class TransitFitter(object):
             if TCE.FP == False:
                 self.planet_candidates.append(TCE)
 
+        print(" ")
         print("   vetting recovered {} planet candidate(s) from {} TCE(s).".format(len(self.planet_candidates), len(self.TCEs)))
 
         return self.planet_candidates
 
 
 
-    def fit_transits(self):
+    def fit_transits(self, save_results=True):
         """Function to perform MCMC fit"""
 
         if not len(self.planet_candidates) >= 1:
             raise ValueError("No planet candidates were found.")
             return None
 
-
-        for candidate in self.planet_candidates:
+        for i, candidate in enumerate(self.planet_candidates):
 
             print("   Running MCMC for planet candidate with $P = {:.6f}$ days (SDE={:.6f})".format(candidate.period, candidate.SDE))
 
@@ -208,20 +206,53 @@ class TransitFitter(object):
 
             time, flux, flux_err = cleaned_array(self.time[intransit], self.f[intransit], self.f_err[intransit])
 
-            planet_fit = self._execute_mcmc_(theta_0, time, flux, flux_err, show_plots=True)
-            #self.fit_results.append(planet_fit)
-            candidate.fit_results = planet_fit
+            planet_fit, walker_fig, corner_fig, best_fig = self._execute_mcmc_(
+                theta_0, time, flux, flux_err, show_plots=False)
 
-        return self.planet_candidates
+            candidate.fit_results = planet_fit
+            candidate.mcmc_fig = walker_fig
+            candidate.corner_fig = corner_fig
+            candidate.result_fig = best_fig
+
+            if save_results:
+                print("   saving results...")
+                self._save_results_pdf_(candidate, i)
+
+        return None
 
         
 
 
+    def _save_results_pdf_(self, planet_dict, planet_ind):
+        """Function to save figures and fit results to one PDF file"""
+
+        with PdfPages("outputs/tater_report_{}_0{}.pdf".format(self.tic_id[4:], planet_ind+1)) as pdf:
+
+            pdf.savefig( self.lc_figure )
+            pdf.savefig( planet_dict.periodogram_fig )
+            pdf.savefig( planet_dict.model_fig )
+            pdf.savefig( planet_dict.mcmc_fig )
+            pdf.savefig( planet_dict.corner_fig )
+            pdf.savefig( planet_dict.result_fig )
+
+            table_fig, _ = self._render_mpl_table_(planet_dict.fit_results)
+            pdf.savefig( table_fig )
+            
+            d = pdf.infodict()
+            d['Title'] = 'TATER Report {}'.format(self.tic_id)
+            d['Author'] = 'Caleb K. Harada'
+            d['Keywords'] = 'TESS, TLS, TATER'
+            d['CreationDate'] = datetime.datetime.today()
+
+        with open("outputs/table_{}_0{}.txt".format(self.tic_id[4:], planet_ind+1), "w") as text_file:
+            text_file.write("{}\n".format(self.tic_id))
+            text_file.write(planet_dict.fit_results.to_latex())
+
+        return None
 
 
 
-
-    def _tls_search_(self, show_plots=True):
+    def _tls_search_(self, show_plots=False):
         """Function to run TLS planet search"""
 
         time = self.time
@@ -255,41 +286,40 @@ class TransitFitter(object):
                                     period_min=0.8
                                 )
 
+            fig1, ax1 = plt.subplots(1, 1, figsize=(12,8))
+            ax1.axhline(8.0, ls="--", c="r", alpha=0.6)
+            ax1.axvline(tls_results.period, alpha=0.2, lw=6, c="b")
+            for i in range(2, 15):
+                ax1.axvline(tls_results.period * i, alpha=0.2, lw=1, c="b", ls='--')
+                ax1.axvline(tls_results.period / i, alpha=0.2, lw=1, c="b", ls='--')
+            ax1.plot(tls_results.periods, tls_results.power, 'k-', lw=1)
+            ax1.set_xlim([tls_results.periods.min(), tls_results.periods.max()])
+            ax1.set_xlabel("period (days)")
+            ax1.set_ylabel("power")
+            ax1.set_title("Peak at {:.6f} days".format(tls_results.period))
+
+            fig2, ax2 = plt.subplots(1, 1, figsize=(12,8))
+            ax2.scatter(tls_results.folded_phase, tls_results.folded_y, s=1, c='k')
+            ax2.plot(tls_results.model_folded_phase, tls_results.model_folded_model)
+            ax2.set_title("Preliminary transit model")
+            ax2.set_xlim([0.45, 0.55])
+            ax2.set_xlabel("phase")
+            ax2.set_ylabel("relative flux")
+
             if show_plots:
-
-                plt.figure(figsize=(12,8))
-                plt.axhline(7.0, ls="--", c="r", alpha=0.6)
-                plt.axvline(tls_results.period, alpha=0.2, lw=6, c="b")
-                for i in range(2, 15):
-                    plt.axvline(tls_results.period * i, alpha=0.2, lw=1, c="b", ls='--')
-                    plt.axvline(tls_results.period / i, alpha=0.2, lw=1, c="b", ls='--')
-                plt.plot(tls_results.periods, tls_results.power, 'k-', lw=1)
-                plt.xlim([tls_results.periods.min(), tls_results.periods.max()])
-                plt.xlabel("period (days)")
-                plt.ylabel("power")
-                plt.title("Peak at {:.6f} days".format(tls_results.period))
-
-                plt.figure(figsize=(12,8))
-                plt.scatter(tls_results.folded_phase, tls_results.folded_y, s=1, c='k')
-                plt.plot(tls_results.model_folded_phase, tls_results.model_folded_model)
-                plt.title("Preliminary transit model")
-                plt.ticklabel_format(useOffset=False)
-                plt.xlim([0.45, 0.55])
-                plt.xlabel("phase")
-                plt.ylabel("relative flux")
-
                 plt.show()
 
-
-            if tls_results.SDE <= 7.0:
-                print("   No TCEs found above SDE=7.0.")
+            if tls_results.SDE <= 8.0:
+                print("   No TCEs found above SDE=8.0.")
                 print(" ")
                 break
 
             print("   TCE found at $P = {:.6f}$ days with SDE of {:.6f}".format(tls_results.period, tls_results.SDE))
             print(" ")
 
-            # add False Positive keyword to result
+            # add False Positive keyword and plots to result
+            tls_results.periodogram_fig = fig1
+            tls_results.model_fig = fig2
             tls_results.FP = False
 
             self.TCEs.append(tls_results)
@@ -515,12 +545,14 @@ class TransitFitter(object):
 
         
         flat_samples = sampler.get_chain(discard=self.nburn, flat=True)
+        samples = sampler.get_chain()
 
         if show_plots:
-
-            samples = sampler.get_chain()
-            self._plot_mcmc_diagnostics_(samples, flat_samples)
-            self._plot_best_fit_(t, f, f_err, flat_samples)
+            walker_fig, corner_fig = self._plot_mcmc_diagnostics_(samples, flat_samples, show_plot=True)
+            best_fig = self._plot_best_fit_(t, f, f_err, flat_samples, show_plot=True)
+        else:
+            walker_fig, corner_fig = self._plot_mcmc_diagnostics_(samples, flat_samples)
+            best_fig = self._plot_best_fit_(t, f, f_err, flat_samples)
 
         # package up fit results
         results_dict = dict(zip(["median", "lower", "upper"], np.quantile(flat_samples, [0.5, 0.16, 0.84], axis=0)))
@@ -543,14 +575,14 @@ class TransitFitter(object):
 
         results_df["units"] = ["d", "d", "-", "-", "-", "R_Earth", "R_Jup", "AU"]
 
-        return results_df
+        return results_df, walker_fig, corner_fig, best_fig
 
 
 
-    def _plot_mcmc_diagnostics_(self, samples, flat_samples):
+    def _plot_mcmc_diagnostics_(self, samples, flat_samples, show_plot=False):
         """Function for plotting MCMC walkers and posterior distributions in a corner plot"""
 
-        fig, axes = plt.subplots(self.ndim, figsize=(12, 10), sharex=True)
+        walker_fig, axes = plt.subplots(self.ndim, figsize=(12, 10), sharex=True)
 
         labels = self.labels
 
@@ -563,17 +595,19 @@ class TransitFitter(object):
 
         axes[-1].set_xlabel("step number")
 
-        _ = corner.corner(flat_samples,
+        corner_fig = corner.corner(flat_samples,
             labels=labels,
             quantiles=[0.16, 0.5, 0.84],
             show_titles=True)
 
-        plt.show()
+        if show_plot:
+            plt.show()
+
+        return walker_fig, corner_fig
 
 
 
-
-    def _plot_best_fit_(self, t, f, f_err, flat_samples):
+    def _plot_best_fit_(self, t, f, f_err, flat_samples, show_plot=False):
         """Function for plotting the folded light curve and best-fit model (50 random samples)"""
 
         gridspec = dict(wspace=0.0, hspace=0.0, height_ratios=[2, 1])
@@ -583,7 +617,6 @@ class TransitFitter(object):
 
         # plot folded light curve and models
         ax = axes[0]
-        ax.set_title(self.tic_id)
         t_fold = (t - t0_best + 0.5 * p_best) % p_best - 0.5 * p_best
         ax.errorbar(t_fold, f, yerr=f_err, fmt='k.', ms=1, alpha=0.1)   # plot data
         ax.plot(t_fold, f, 'k.', ms=1, alpha=0.5)
@@ -640,8 +673,38 @@ class TransitFitter(object):
         
         ax.set_ylabel("median residuals")
         ax.set_xlabel("phase")
-        
-        plt.show()
+
+        if show_plot:
+            plt.show()
+
+        return fig
+
+
+
+    def _render_mpl_table_(self, data, col_width=3.0, row_height=0.625,
+                     header_color='#40466e', row_colors=['#f1f1f2', 'w'], edge_color='w',
+                     bbox=[0, 0, 1, 1], header_columns=0,
+                     ax=None, **kwargs):
+        """Function to convert pandas df table to a figure
+        see https://stackoverflow.com/questions/19726663/how-to-save-the-pandas-dataframe-series-data-as-a-figure"""
+
+        if ax is None:
+            size = (np.array(data.shape[::-1]) + np.array([0, 1])) * np.array([col_width, row_height])
+            fig, ax = plt.subplots(figsize=size)
+            ax.axis('off')
+        mpl_table = ax.table(cellText=data.values, bbox=bbox,
+                             rowLabels=data.index, colLabels=data.columns, **kwargs)
+        mpl_table.auto_set_font_size(True)
+
+        for k, cell in mpl_table._cells.items():
+            cell.set_edgecolor(edge_color)
+            if k[0] == 0 or k[1] < header_columns:
+                cell.set_text_props(weight='bold', color='w')
+                cell.set_facecolor(header_color)
+            else:
+                cell.set_facecolor(row_colors[k[0]%len(row_colors) ])
+
+        return ax.get_figure(), ax
 
 
 
