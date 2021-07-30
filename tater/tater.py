@@ -206,13 +206,14 @@ class TransitFitter(object):
 
             time, flux, flux_err = cleaned_array(self.time[intransit], self.f[intransit], self.f_err[intransit])
 
-            planet_fit, walker_fig, corner_fig, best_fig = self._execute_mcmc_(
+            planet_fit, walker_fig, corner_fig, best_fig, best_full_fig = self._execute_mcmc_(
                 theta_0, time, flux, flux_err, show_plots=False)
 
             candidate.fit_results = planet_fit
             candidate.mcmc_fig = walker_fig
             candidate.corner_fig = corner_fig
             candidate.result_fig = best_fig
+            candidate.result_full_fig = best_full_fig
 
             if save_results:
                 print("   saving results...")
@@ -234,6 +235,7 @@ class TransitFitter(object):
             pdf.savefig( planet_dict.mcmc_fig )
             pdf.savefig( planet_dict.corner_fig )
             pdf.savefig( planet_dict.result_fig )
+            pdf.savefig( planet_dict.result_full_fig )
 
             table_fig, _ = self._render_mpl_table_(planet_dict.fit_results)
             pdf.savefig( table_fig )
@@ -549,10 +551,10 @@ class TransitFitter(object):
 
         if show_plots:
             walker_fig, corner_fig = self._plot_mcmc_diagnostics_(samples, flat_samples, show_plot=True)
-            best_fig = self._plot_best_fit_(t, f, f_err, flat_samples, show_plot=True)
+            best_fig, best_full_fig = self._plot_best_fit_(t, f, f_err, flat_samples, show_plot=True)
         else:
             walker_fig, corner_fig = self._plot_mcmc_diagnostics_(samples, flat_samples)
-            best_fig = self._plot_best_fit_(t, f, f_err, flat_samples)
+            best_fig, best_full_fig = self._plot_best_fit_(t, f, f_err, flat_samples)
 
         # package up fit results
         results_dict = dict(zip(["median", "lower", "upper"], np.quantile(flat_samples, [0.5, 0.16, 0.84], axis=0)))
@@ -575,7 +577,7 @@ class TransitFitter(object):
 
         results_df["units"] = ["d", "d", "-", "-", "-", "R_Earth", "R_Jup", "AU"]
 
-        return results_df, walker_fig, corner_fig, best_fig
+        return results_df, walker_fig, corner_fig, best_fig, best_full_fig
 
 
 
@@ -675,10 +677,19 @@ class TransitFitter(object):
         ax.set_ylabel("median residuals")
         ax.set_xlabel("phase (days)")
 
+        # full light curve with model
+        fig2, ax2 = plt.subplots(1, 1, figsize=(10, 8))
+        ax2.scatter(self.time, self.f, c='k', s=1, alpha=0.2)
+        model = batman.TransitModel(params, self.time)    # initializes model
+        flux_m = model.light_curve(params)                # calculates light curve
+        ax2.plot(self.time, flux_m, "b-", alpha=0.75)
+        ax2.set_ylabel("relative flux")
+        ax2.set_xlabel("time (days)")
+
         if show_plot:
             plt.show()
 
-        return fig
+        return fig, fig2
 
 
 
