@@ -227,7 +227,14 @@ class TransitFitter(object):
     def _save_results_pdf_(self, planet_dict, planet_ind):
         """Function to save figures and fit results to one PDF file"""
 
-        with PdfPages("outputs/tater_report_{}_0{}.pdf".format(self.tic_id[4:], planet_ind+1)) as pdf:
+        tic_no = self.tic_id[4:]
+
+        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+
+        if not os.path.isdir(save_to_path):
+            os.mkdir(save_to_path)
+
+        with PdfPages("{}/tater_report_{}_0{}.pdf".format(save_to_path, tic_no, planet_ind+1)) as pdf:
 
             pdf.savefig( self.lc_figure )
             pdf.savefig( planet_dict.periodogram_fig )
@@ -246,8 +253,11 @@ class TransitFitter(object):
             d['Keywords'] = 'TESS, TLS, TATER'
             d['CreationDate'] = datetime.datetime.today()
 
-        with open("outputs/table_{}_0{}.txt".format(self.tic_id[4:], planet_ind+1), "w") as text_file:
-            text_file.write("{}\n".format(self.tic_id))
+        with open("{}/tater_summary_{}_0{}.txt".format(save_to_path, tic_no, planet_ind+1), "w") as text_file:
+            text_file.write("{}\n \n".format(self.tic_id))
+            for key in planet_dict.keys():
+                text_file.write("{} : {} \n".format(key, planet_dict[key]))
+            text_file.write("\n LaTeX table : \n")
             text_file.write(planet_dict.fit_results.to_latex())
 
         return None
