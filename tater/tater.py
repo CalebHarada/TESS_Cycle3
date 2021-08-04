@@ -127,7 +127,7 @@ class TransitFitter(object):
         axes[1].set_ylabel("Relative flux")
 
         # flatten !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        for lc in tqdm(self.lc[:1], desc="   flattening light curve"):
+        for lc in tqdm(self.lc, desc="   flattening light curve"):
             
             time = lc.remove_nans().time.value
             flux = lc.remove_nans().flux.value
