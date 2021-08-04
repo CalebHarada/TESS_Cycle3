@@ -54,7 +54,7 @@ __status__ = " "
 
 
 class TransitFitter(object):
-    """blah blah"""
+    """Main class"""
 
 
     def __init__(self, tic_id):
