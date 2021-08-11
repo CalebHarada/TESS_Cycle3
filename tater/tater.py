@@ -192,6 +192,8 @@ class TransitFitter(object):
     def fit_transits(self, save_results=True):
         """Function to perform MCMC fit"""
 
+        ######## Add option to run multi-nest instead of MCMC here? (AM)
+
         if not len(self.planet_candidates) >= 1:
             raise ValueError("No planet candidates were found.")
             return None
