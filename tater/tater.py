@@ -11,7 +11,7 @@ ensemble sampler to fit a BATMAN transit model to the data.
 # [...]
 
 # Built-in/Generic Imports
-import os, sys, datetime
+import os, sys, datetime, warnings
 # [...]
 
 # Libs
@@ -23,7 +23,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from pandas import DataFrame
 from scipy.interpolate import LinearNDInterpolator
 from scipy.optimize import minimize
-from scipy.stats import linregress
+from scipy.stats import linregress, binned_statistic
 from scipy.signal import find_peaks, medfilt
 from scipy.special import erfcinv
 from lightkurve import search_lightcurve
@@ -53,8 +53,11 @@ __status__ = " "
 # Code begins here.
 
 
+
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 class TransitFitter(object):
-    """blah blah"""
+    """Main class"""
 
 
     def __init__(self, tic_id):
@@ -108,7 +111,7 @@ class TransitFitter(object):
 
         # download
         print("   acquiring TESS data...")
-        search_result = search_lightcurve(self.tic_id, mission="TESS", author="SPOC")
+        search_result = search_lightcurve(self.tic_id, mission="TESS", author="SPOC", exptime=120)
         self.lc = search_result.download_all(quality_bitmask="default")
         self.time_raw, self.f_raw, self.ferr_raw = np.concatenate([(sector.remove_nans().time.value,
                                                                     sector.remove_nans().flux.value,
@@ -126,7 +129,7 @@ class TransitFitter(object):
         axes[1].set_xlabel("Time (days)")
         axes[1].set_ylabel("Relative flux")
 
-        # flatten !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # flatten
         for lc in tqdm(self.lc, desc="   flattening light curve"):
             
             time = lc.remove_nans().time.value
@@ -149,11 +152,13 @@ class TransitFitter(object):
             self.f = np.concatenate((self.f, flatten_lc))
             self.trend = np.concatenate((self.trend, trend_lc))
 
-            axes[0].scatter(time, flux, c='k', s=1, alpha=0.2)
+            axes[0].scatter(time, flux, c='k', s=1, alpha=0.2, rasterized=True)
             axes[0].plot(time, trend_lc, "b-", lw=2)
-            axes[1].scatter(time, flatten_lc, c='k', s=1, alpha=0.2)
+            axes[1].scatter(time, flatten_lc, c='k', s=1, alpha=0.2, rasterized=True)
         
         self.lc_figure = fig
+        plt.close()
+
         if show_plot:
             plt.show()
 
@@ -215,22 +220,126 @@ class TransitFitter(object):
             candidate.result_fig = best_fig
             candidate.result_full_fig = best_full_fig
 
+            plt.close()
+
             if save_results:
                 print("   saving results...")
                 self._save_results_pdf_(candidate, i)
+                print("   done.")
+
+        if save_results:
+            self._save_results_image_()
 
         return None
 
-        
+
+
+    def _save_results_image_(self):
+        """Function to save a visualization of the system."""
+
+        # save directory
+        tic_no = self.tic_id[4:]
+        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        if not os.path.isdir(save_to_path):
+            os.mkdir(save_to_path)
+
+        n_planets = len(self.planet_candidates)
+
+        fig, axes = plt.subplots(1+n_planets, 1, figsize=(15,5+5*n_planets), sharex=True)
+
+        # define color of star
+        if self.Teff <= 4000:
+            star_color = "tomato"
+        elif 4000 < self.Teff <= 5100:
+            star_color = "wheat"
+        elif 5100 < self.Teff <= 6100:
+            star_color = "khaki"
+        elif 6100 < self.Teff <= 7500:
+            star_color = "lightyellow"
+        else:
+            star_color = "lightsteelblue"
+
+        axes[0].plot([-5, 100], [0, 0], 'k--', zorder=0)
+
+        # plot star, label parameters
+        star = plt.Circle((0, 0), 1.0, color=star_color, ec="k", zorder=10)
+        axes[0].add_patch(star)
+        axes[0].text(-4, 2, s=("Star: " + format(self.tic_id) + "\n" + \
+                                "$T_{eff}$ = " + format(self.Teff) + " K\n" + \
+                                "$R_{*}$ = " + format(self.R_star.value) + " $R_{sun}$\n" + \
+                                "$M_{*}$ = " + format(self.M_star.value) + " $M_{sun}$"
+                              ), size=15)
+
+        # plot planets
+        max_x = 20
+        for i, planet in enumerate(self.planet_candidates):
+            
+            inc = np.arccos(planet.fit_results["median"]["$b$"] / planet.fit_results["median"]["$a/R_*$"])
+            x = planet.fit_results["median"]["$a/R_*$"] * np.sin(inc)
+            y = planet.fit_results["median"]["$a/R_*$"] * np.cos(inc)
+            if x > max_x:
+                max_x = x
+            
+            axes[0].plot(x, y, "x", c="darkslategray", ms=15)
+            axes[0].text(x-3, y+1, "SDE = {:.4f}".format(planet.SDE), size=13)
+            
+            star = plt.Circle((x, 0), 5.0, color=star_color, ec="k", zorder=10)
+            axes[i+1].add_patch(star)
+            
+            p = plt.Circle((x, planet.fit_results["median"]["$b$"]*5),
+                planet.fit_results["median"]["$r_p/R_*$"]*5,
+                color='darkslategray', zorder=20)
+            axes[i+1].add_patch(p)
+            
+            axes[i+1].plot([x-8, x+8],
+                [planet.fit_results["median"]["$b$"]*5, planet.fit_results["median"]["$b$"]*5],
+                'k:', zorder=15, alpha=0.7)
+            axes[i+1].plot([x, x],
+                [0, planet.fit_results["median"]["$b$"]*5],
+                'k:', zorder=15, alpha=0.7)
+            axes[i+1].plot(x, 0, 'k.', zorder=20)
+
+            axes[i+1].text(x-6.5, 5, s=("$P$ = " + format(planet.fit_results["median"]["$P$"], ".6f") + \
+                                        " [{:.6f}, {:.6f}]".format(planet.fit_results["(-)"]["$P$"],
+                                            planet.fit_results["(+)"]["$P$"]) + " d\n" + \
+                                "$r_p/R_*$ = " + format(planet.fit_results["median"]["$r_p/R_*$"], ".5f") + \
+                                        " [{:.5f}, {:.5f}]".format(planet.fit_results["(-)"]["$r_p/R_*$"],
+                                            planet.fit_results["(+)"]["$r_p/R_*$"]) + "\n" + \
+                                "       (" + format(planet.fit_results["median"]["$r_p$"][0], ".5f") + \
+                                        " [{:.5f}, {:.5f}]".format(planet.fit_results["(-)"]["$r_p$"][0],
+                                            planet.fit_results["(+)"]["$r_p$"][0]) + " EarthRad)\n" + \
+                                "$a/R_*$ = " + format(planet.fit_results["median"]["$a/R_*$"], ".4f") + \
+                                        " [{:.4f}, {:.4f}]".format(planet.fit_results["(-)"]["$a/R_*$"],
+                                            planet.fit_results["(+)"]["$a/R_*$"]) + "\n" + \
+                                "       (" + format(planet.fit_results["median"]["$a$"], ".5f") + \
+                                        " [{:.5f}, {:.5f}]".format(planet.fit_results["(-)"]["$a$"],
+                                            planet.fit_results["(+)"]["$a$"]) + " AU)\n" + \
+                                "$b$ = " + format(planet.fit_results["median"]["$b$"], ".4f") + \
+                                        " [{:.4f}, {:.4f}]".format(planet.fit_results["(-)"]["$b$"],
+                                            planet.fit_results["(+)"]["$b$"]) + "\n"
+                              ), size=13)
+
+        # adjust axes
+        for ax in axes:
+            ax.set_aspect('equal')
+            ax.set_aspect('equal')
+            ax.set_ylim([-5.5, 5.5])
+            ax.set_xlim([-5, max_x+20])
+            ax.axis("off")
+
+        # save figure
+        fig.savefig("{}/system_overview_{}.pdf".format(save_to_path, tic_no))
+        plt.close()
+
+        return None
+
 
 
     def _save_results_pdf_(self, planet_dict, planet_ind):
         """Function to save figures and fit results to one PDF file"""
 
         tic_no = self.tic_id[4:]
-
         save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
-
         if not os.path.isdir(save_to_path):
             os.mkdir(save_to_path)
 
@@ -271,19 +380,15 @@ class TransitFitter(object):
         flux = self.f
         flux_err = self.f_err
 
-        period_max = np.ptp(time) / 3   # at least 3 transits
-        if period_max > 60:
-            period_max = 60
+        period_max = np.ptp(time) / 2   # at least 2 transits
+        if period_max > 80:
+            period_max = 80
 
         intransit = np.zeros(len(time), dtype="bool")
 
         for i in range(6):
 
             time, flux, flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
-
-            #plt.figure()
-            #plt.scatter(time, flux, c='k', s=1, alpha=0.2)
-            #plt.show()
 
             tls = transitleastsquares(time, flux, flux_err)
             tls_results = tls.power(
@@ -299,7 +404,7 @@ class TransitFitter(object):
                                 )
 
             fig1, ax1 = plt.subplots(1, 1, figsize=(12,8))
-            ax1.axhline(8.0, ls="--", c="r", alpha=0.6)
+            ax1.axhline(10.0, ls="--", c="r", alpha=0.6)
             ax1.axvline(tls_results.period, alpha=0.2, lw=6, c="b")
             for i in range(2, 15):
                 ax1.axvline(tls_results.period * i, alpha=0.2, lw=1, c="b", ls='--')
@@ -311,7 +416,7 @@ class TransitFitter(object):
             ax1.set_title("Peak at {:.6f} days".format(tls_results.period))
 
             fig2, ax2 = plt.subplots(1, 1, figsize=(12,8))
-            ax2.scatter(tls_results.folded_phase, tls_results.folded_y, s=1, c='k')
+            ax2.scatter(tls_results.folded_phase, tls_results.folded_y, s=1, c='k', rasterized=True)
             ax2.plot(tls_results.model_folded_phase, tls_results.model_folded_model)
             ax2.set_title("Preliminary transit model")
             ax2.set_xlim([0.45, 0.55])
@@ -321,8 +426,8 @@ class TransitFitter(object):
             if show_plots:
                 plt.show()
 
-            if tls_results.SDE <= 8.0:
-                print("   No TCEs found above SDE=8.0.")
+            if tls_results.SDE <= 10.0:
+                print("   No additional TCEs found above SDE=10.0.")
                 print(" ")
                 break
 
@@ -333,6 +438,11 @@ class TransitFitter(object):
             tls_results.periodogram_fig = fig1
             tls_results.model_fig = fig2
             tls_results.FP = False
+
+            plt.close()
+
+            # don't trust fit duration if there are changes in cadence. Estimate from P and stellar parameters instead.
+            tls_results.duration = self._estimate_duration_(tls_results.period)
 
             self.TCEs.append(tls_results)
             intransit = transit_mask(time, tls_results.period, 2.5*tls_results.duration, tls_results.T0)
@@ -600,7 +710,7 @@ class TransitFitter(object):
 
         for i in range(self.ndim):
             ax = axes[i]
-            ax.plot(samples[self.nburn:, :, i], alpha=0.3)
+            ax.plot(samples[self.nburn:, :, i], alpha=0.3, rasterized=True)
             ax.set_xlim(0, len(samples)-self.nburn)
             ax.set_ylabel(labels[i])
             ax.yaxis.set_label_coords(-0.1, 0.5)
@@ -619,6 +729,22 @@ class TransitFitter(object):
 
 
 
+    def _resample_(self, x, y, nbins=30):
+        """Function to resample light curve for display purposes.
+
+        :returns: binned_x, binned_y, binned_yerr, binned_xerr
+
+        """
+
+        bin_means, bin_edges, _ = binned_statistic(x, y, statistic='mean', bins=nbins)
+        bin_stds, _, _ = binned_statistic(x, y, statistic='std', bins=nbins)
+        bin_width = (bin_edges[1] - bin_edges[0])
+        bin_centers = bin_edges[1:] - bin_width/2
+
+        return bin_centers, bin_means, bin_stds, bin_width/2
+
+
+
     def _plot_best_fit_(self, t, f, f_err, flat_samples, show_plot=False):
         """Function for plotting the folded light curve and best-fit model (50 random samples)"""
 
@@ -630,12 +756,18 @@ class TransitFitter(object):
         # plot folded light curve and models
         ax = axes[0]
         t_fold = (t - t0_best + 0.5 * p_best) % p_best - 0.5 * p_best
-        ax.errorbar(t_fold, f, yerr=f_err, fmt='k.', ms=1, alpha=0.1)   # plot data
-        ax.plot(t_fold, f, 'k.', ms=1, alpha=0.5)
+
+        # sort arrays
+        f = f[np.argsort(t_fold)]
+        f_err = f_err[np.argsort(t_fold)]
+        t_fold = np.sort(t_fold)
+
+        ax.errorbar(t_fold*24, f, yerr=f_err, fmt='k.', ms=1, alpha=0.1, rasterized=True)   # plot data
+        ax.plot(t_fold*24, f, 'k.', ms=1, alpha=0.5, rasterized=True)
+        ax.errorbar(*self._resample_(t_fold*24, f), fmt='rx', fillstyle="none", elinewidth=1, zorder=200)
         ax.set_ylabel("relative flux")
         
         inds = np.random.randint(len(flat_samples), size=100)   # plot 100 random samples
-        t_model = np.sort(t_fold)
         for ind in inds:
             
             per, t0, rp, a, b = flat_samples[ind]
@@ -653,10 +785,10 @@ class TransitFitter(object):
             params.u = [self.u1, self.u2]        # limb darkening coefficients []
             params.limb_dark = "quadratic"       # limb darkening model
             
-            model = batman.TransitModel(params, t_model)      # initializes model
+            model = batman.TransitModel(params, t_fold)      # initializes model
             flux_model = model.light_curve(params)            # calculates light curve
        
-            ax.plot(t_model, flux_model, 'b-', lw=1, alpha=0.5)
+            ax.plot(t_fold*24, flux_model, 'b-', lw=1, alpha=0.5)
 
         # plot residuals for median "best-fit" model
         ax = axes[1]
@@ -664,7 +796,7 @@ class TransitFitter(object):
         inc = np.arccos(b_best / a_best) * (180 / np.pi)
 
         params = batman.TransitParams()
-        params.t0 = t0_best                # time of inferior conjunction
+        params.t0 = 0                      # time of inferior conjunction
         params.per = p_best                # orbital period
         params.rp = rp_best                # planet radius (in units of stellar radii)
         params.a = a_best                  # semi-major axis (in units of stellar radii)
@@ -674,22 +806,25 @@ class TransitFitter(object):
         params.u = [self.u1, self.u2]      # limb darkening coefficients []
         params.limb_dark = "quadratic"     # limb darkening model
 
-        model = batman.TransitModel(params, t)    # initializes model
+        model = batman.TransitModel(params, t_fold)    # initializes model
         flux_m = model.light_curve(params)        # calculates light curve
 
-        ax.errorbar(t_fold, f-flux_m, yerr=f_err, fmt='k.', ms=1, alpha=0.1)   # plot data
-        ax.plot(t_fold, f-flux_m, 'k.', ms=1, alpha=0.5)
+        ax.errorbar(t_fold*24, f-flux_m, yerr=f_err, fmt='k.', ms=1, alpha=0.1, rasterized=True)   # plot data
+        ax.plot(t_fold*24, f-flux_m, 'k.', ms=1, alpha=0.5, rasterized=True)
+        ax.errorbar(*self._resample_(t_fold*24, f-flux_m), fmt='rx', fillstyle="none", elinewidth=1, zorder=200)
 
-        ax.set_xlim([t_fold.min(), t_fold.max()])
+        ax.set_xlim([t_fold.min()*24+0.75, t_fold.max()*24-0.75])
 
         ax.axhline(0.0, color="b", alpha=0.75)
         
         ax.set_ylabel("median residuals")
-        ax.set_xlabel("phase (days)")
+        ax.set_xlabel("phase (hrs)")
 
         # full light curve with model
         fig2, ax2 = plt.subplots(1, 1, figsize=(10, 8))
-        ax2.scatter(self.time, self.f, c='k', s=1, alpha=0.2)
+        ax2.scatter(self.time, self.f, c='k', s=1, alpha=0.2, rasterized=True)
+
+        params.t0 = t0_best
         model = batman.TransitModel(params, self.time)    # initializes model
         flux_m = model.light_curve(params)                # calculates light curve
         ax2.plot(self.time, flux_m, "b-", alpha=0.75)
