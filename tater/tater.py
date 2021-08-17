@@ -131,7 +131,7 @@ class TransitFitter(object):
         axes[1].set_ylabel("Relative flux")
 
         # flatten
-        for lc in tqdm(self.lc[:1], desc="   flattening light curve"):
+        for lc in tqdm(self.lc, desc="   flattening light curve"):
             
             time = lc.remove_nans().time.value
             flux = lc.remove_nans().flux.value
@@ -430,7 +430,8 @@ class TransitFitter(object):
             if show_plots:
                 plt.show()
 
-            if tls_results.SDE <= 10.0:
+            # set TCE threshold to 10
+            if round(tls_results.SDE) <= 10.0:
                 print("   No additional TCEs found above SDE=10.0.")
                 print(" ")
                 break
@@ -475,17 +476,21 @@ class TransitFitter(object):
         for t0 in transit_times:
             
             transit_msk = (self.time_raw > t0 - 3*duration) & (self.time_raw < t0 + 3*duration)
-            trend_msk = ((self.time_raw > t0 - 3*duration) & (self.time_raw < t0 - 1.5*duration)) | \
-                        ((self.time_raw < t0 + 3*duration) & (self.time_raw > t0 + 1.5*duration))
+            pre_msk = (self.time_raw > t0 - 3*duration) & (self.time_raw < t0 - 1.5*duration)
+            post_msk = (self.time_raw < t0 + 3*duration) & (self.time_raw > t0 + 1.5*duration)
+            trend_msk = pre_msk | post_msk
             
-            # linear model fit to out of transit data
-            slope, intercept, _, _, _ = linregress(self.time_raw[trend_msk], self.f_raw[trend_msk])
-            y_trend = linear_func(self.time_raw[transit_msk], slope, intercept)
-            
-            # normalize light curve by linear ootr trend
-            new_t = np.concatenate((new_t, self.time_raw[transit_msk]))
-            new_f = np.concatenate((new_f, self.f_raw[transit_msk] / y_trend))
-            new_ferr = np.concatenate((new_ferr, self.ferr_raw[transit_msk] / self.f_raw[transit_msk]))
+            # requires at leaast 20 data points during, before, and after transit
+            if (np.sum(pre_msk) > 20) & (np.sum(post_msk) > 20) & (np.sum(transit_msk) > 20):
+
+                # linear model fit to out of transit data
+                slope, intercept, _, _, _ = linregress(self.time_raw[trend_msk], self.f_raw[trend_msk])
+                y_trend = linear_func(self.time_raw[transit_msk], slope, intercept)
+                
+                # normalize light curve by linear ootr trend
+                new_t = np.concatenate((new_t, self.time_raw[transit_msk]))
+                new_f = np.concatenate((new_f, self.f_raw[transit_msk] / y_trend))
+                new_ferr = np.concatenate((new_ferr, self.ferr_raw[transit_msk] / self.f_raw[transit_msk]))
             
         return new_t, new_f, new_ferr
 
@@ -525,8 +530,10 @@ class TransitFitter(object):
 
     def _generate_vet_figures_(self, tce_dict):
         """Function to produce plots with vetting diagnostics"""
-        self.time_raw, self.f_raw, self.ferr_raw
         
+        ###### NEED TO DEAL WITH TRANSITS WHICH HAVE NO DATA!
+
+
         # function to draw a line
         linear_func = lambda x, m, b: m*x + b
 
@@ -537,12 +544,14 @@ class TransitFitter(object):
         depth = tce_dict.depth
         
         # empty arrays
+        transits_odd = []
         t0_odd = []
         time_odd = []
         flux_odd = []
         depth_odd = []
         tfold_odd = []
         
+        transits_even = []
         t0_even = []
         time_even = []
         flux_even = []
@@ -551,98 +560,111 @@ class TransitFitter(object):
         
         # fit each individual transit separately
         for i, t0 in enumerate(transit_times):
-            
+
             # masks for ootr trend and in-transit
             transit_msk = (self.time_raw > t0 - 3*duration) & (self.time_raw < t0 + 3*duration)
-            trend_msk = ((self.time_raw > t0 - 3*duration) & (self.time_raw < t0 - 1.5*duration)) | \
-                        ((self.time_raw < t0 + 3*duration) & (self.time_raw > t0 + 1.5*duration))
-            
-            # fit line to ootr, normalize new flux
-            slope, intercept, _, _, _ = linregress(self.time_raw[trend_msk], self.f_raw[trend_msk])
-            y_trend = linear_func(self.time_raw[transit_msk], slope, intercept)
-            time_new = self.time_raw[transit_msk]
-            f_new = self.f_raw[transit_msk] / y_trend
-            ferr_new = self.ferr_raw[transit_msk] / self.f_raw[transit_msk]
-                
-            # Fit transit model to each transit individually --> get t0, depths per transit
-            p0 = [t0, np.sqrt(depth)]
-            popt, _ = curve_fit(lambda t, t0_best, rp_best: self._model_single_transit_(t,
-                                                                                   t0=t0_best,
-                                                                                   per=period,
-                                                                                   rp=rp_best,
-                                                                                   a=self._P_to_a_(period)
-                                                                                   ),
-                                time_new, f_new, p0, sigma=ferr_new
-                                )
+            pre_msk = (self.time_raw > t0 - 3*duration) & (self.time_raw < t0 - 1.5*duration)
+            post_msk = (self.time_raw < t0 + 3*duration) & (self.time_raw > t0 + 1.5*duration)
+            trend_msk = pre_msk | post_msk
 
-            # odd transits
-            if i % 2:
-                t0_odd.append(popt[0])
-                time_odd.append(time_new)
-                flux_odd.append(f_new)
-                depth_odd.append(popt[1])
+            # requires at leaast 20 data points during, before, and after transit
+            if (np.sum(pre_msk) > 20) & (np.sum(post_msk) > 20) & (np.sum(transit_msk) > 20):
             
-            # even transits
-            else:
-                t0_even.append(popt[0])
-                time_even.append(time_new)
-                flux_even.append(f_new)
-                depth_even.append(popt[1])
-        
+                # fit line to ootr, normalize new flux
+                slope, intercept, _, _, _ = linregress(self.time_raw[trend_msk], self.f_raw[trend_msk])
+                y_trend = linear_func(self.time_raw[transit_msk], slope, intercept)
+                time_new = self.time_raw[transit_msk]
+                f_new = self.f_raw[transit_msk] / y_trend
+                ferr_new = self.ferr_raw[transit_msk] / self.f_raw[transit_msk]
+                    
+                # Fit transit model to each transit individually --> get t0, depths per transit
+                p0 = [t0, np.sqrt(depth)]
+                popt, _ = curve_fit(lambda t, t0_best, rp_best: self._model_single_transit_(t,
+                                                                                       t0=t0_best,
+                                                                                       per=period,
+                                                                                       rp=rp_best,
+                                                                                       a=self._P_to_a_(period)
+                                                                                       ),
+                                    time_new, f_new, p0, sigma=ferr_new
+                                    )
+
+                # odd transits
+                if i % 2:
+                    transits_odd.append(i)
+                    t0_odd.append(popt[0])
+                    time_odd.append(time_new)
+                    flux_odd.append(f_new)
+                    depth_odd.append(popt[1])
+                
+                # even transits
+                else:
+                    transits_even.append(i)
+                    t0_even.append(popt[0])
+                    time_even.append(time_new)
+                    flux_even.append(f_new)
+                    depth_even.append(popt[1])
+
+
+        print(transits_odd, transits_even)
+
+
         # make odd vs. even figure
         gridspec = dict(wspace=0.0, hspace=0.0, width_ratios=[1, 1])
         oddeven_fig, axes = plt.subplots(1, 2, figsize=(10,6), sharey=True, gridspec_kw=gridspec)
         cmap = get_cmap('viridis')
         
         # plot odd transits
-        ax = axes[1]
-        mean_depth_odd = np.mean(np.array(depth_odd)**2)
-        std_depth_odd = np.std(np.array(depth_odd)**2)
-        ax.axhline(1 - mean_depth_odd, c='b', ls='-', lw=2, alpha=0.2)
-        ax.axhline(1 - (mean_depth_odd+std_depth_odd), c='b', ls='--', lw=1)
-        ax.axhline(1 - (mean_depth_odd-std_depth_odd), c='b', ls='--', lw=1)
-        ax.set_title("odd ($\\delta$ = {:.5f} $\\pm$ {:.5f})".format(mean_depth_odd, std_depth_odd))
-        for i in range(len(time_odd)):
-            color_values = np.linspace(0, 1, len(time_odd))
-            t_fold = (time_odd[i] - t0_odd[i] + 0.5 * period) % period - 0.5 * period
-            tfold_odd.append(t_fold)
-            ax.scatter(t_fold*24, flux_odd[i], s=4, alpha=0.5, color=cmap(color_values[i]), rasterized=True, label=2*(i+1)-1)
-        ax.legend(title="transit #", frameon=False)
-        # binned
-        flux_fold_odd = np.array([item for sublist in flux_odd for item in sublist])
-        time_fold_odd = np.array([item for sublist in tfold_odd for item in sublist])
-        flux_fold_odd = flux_fold_odd[np.argsort(time_fold_odd)]
-        time_fold_odd = np.sort(time_fold_odd)
-        ax.errorbar(*self._resample_(time_fold_odd*24, flux_fold_odd),
-            fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
+        if len(transits_odd) > 0:
+            ax = axes[1]
+            mean_depth_odd = np.mean(np.array(depth_odd)**2)
+            std_depth_odd = np.std(np.array(depth_odd)**2)
+            ax.axhline(1 - mean_depth_odd, c='b', ls='-', lw=2, alpha=0.2)
+            ax.axhline(1 - (mean_depth_odd+std_depth_odd), c='b', ls='--', lw=1)
+            ax.axhline(1 - (mean_depth_odd-std_depth_odd), c='b', ls='--', lw=1)
+            ax.set_title("odd ($\\delta$ = {:.5f} $\\pm$ {:.5f})".format(mean_depth_odd, std_depth_odd))
+            for i in range(len(time_odd)):
+                color_values = np.linspace(0, 1, len(time_odd))
+                t_fold = (time_odd[i] - t0_odd[i] + 0.5 * period) % period - 0.5 * period
+                tfold_odd.append(t_fold)
+                ax.scatter(t_fold*24, flux_odd[i], s=4, alpha=0.5, color=cmap(color_values[i]), rasterized=True, label=transits_odd[i])
+            ax.legend(title="transit #", frameon=False)
+            # binned
+            flux_fold_odd = np.array([item for sublist in flux_odd for item in sublist])
+            time_fold_odd = np.array([item for sublist in tfold_odd for item in sublist])
+            flux_fold_odd = flux_fold_odd[np.argsort(time_fold_odd)]
+            time_fold_odd = np.sort(time_fold_odd)
+            ax.errorbar(*self._resample_(time_fold_odd*24, flux_fold_odd),
+                fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
 
         # plot even transits
-        ax = axes[0]
-        mean_depth_even = np.mean(np.array(depth_even)**2)
-        std_depth_even = np.std(np.array(depth_even)**2)
-        ax.axhline(1 - mean_depth_even, c='b', ls='-', lw=2, alpha=0.2)
-        ax.axhline(1 - (mean_depth_even+std_depth_even), c='b', ls='--', lw=1)
-        ax.axhline(1 - (mean_depth_even-std_depth_even), c='b', ls='--', lw=1)
-        ax.set_title("even ($\\delta$ = {:.5f} $\\pm$ {:.5f})".format(mean_depth_even, std_depth_even))
-        ax.set_ylabel("relative flux")
-        for i in range(len(time_even)):
-            color_values = np.linspace(0, 1, len(time_even))
-            t_fold = (time_even[i] - t0_even[i] + 0.5 * period) % period - 0.5 * period
-            tfold_even.append(t_fold)
-            ax.scatter(t_fold*24, flux_even[i], s=4, alpha=0.5, color=cmap(color_values[i]), rasterized=True, label=2*i)
-        ax.legend(title="transit #", frameon=False)
-        # binned
-        flux_fold_even = np.array([item for sublist in flux_even for item in sublist])
-        time_fold_even = np.array([item for sublist in tfold_even for item in sublist])
-        flux_fold_even = flux_fold_even[np.argsort(time_fold_even)]
-        time_fold_even = np.sort(time_fold_even)
-        ax.errorbar(*self._resample_(time_fold_even*24, flux_fold_even),
-            fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
+        if len(transits_even) > 0:
+            ax = axes[0]
+            mean_depth_even = np.mean(np.array(depth_even)**2)
+            std_depth_even = np.std(np.array(depth_even)**2)
+            ax.axhline(1 - mean_depth_even, c='b', ls='-', lw=2, alpha=0.2)
+            ax.axhline(1 - (mean_depth_even+std_depth_even), c='b', ls='--', lw=1)
+            ax.axhline(1 - (mean_depth_even-std_depth_even), c='b', ls='--', lw=1)
+            ax.set_title("even ($\\delta$ = {:.5f} $\\pm$ {:.5f})".format(mean_depth_even, std_depth_even))
+            ax.set_ylabel("relative flux")
+            for i in range(len(time_even)):
+                color_values = np.linspace(0, 1, len(time_even))
+                t_fold = (time_even[i] - t0_even[i] + 0.5 * period) % period - 0.5 * period
+                tfold_even.append(t_fold)
+                ax.scatter(t_fold*24, flux_even[i], s=4, alpha=0.5, color=cmap(color_values[i]), rasterized=True, label=transits_even[i])
+            ax.legend(title="transit #", frameon=False)
+            # binned
+            flux_fold_even = np.array([item for sublist in flux_even for item in sublist])
+            time_fold_even = np.array([item for sublist in tfold_even for item in sublist])
+            flux_fold_even = flux_fold_even[np.argsort(time_fold_even)]
+            time_fold_even = np.sort(time_fold_even)
+            ax.errorbar(*self._resample_(time_fold_even*24, flux_fold_even),
+                fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
         
-        # format axes
-        oddeven_fig.suptitle("$\\Delta\\delta$ = {:.6f} $\\pm$ {:.6f}".format(
-            abs(mean_depth_even - mean_depth_odd), np.sqrt(std_depth_even**2 + std_depth_odd**2))
-        )
+            # format axes
+            oddeven_fig.suptitle("$\\Delta\\delta$ = {:.6f} $\\pm$ {:.6f}".format(
+                abs(mean_depth_even - mean_depth_odd), np.sqrt(std_depth_even**2 + std_depth_odd**2))
+            )
+        
         for ax in axes:
             ax.axhline(1.0, c='k', ls='--', lw=1, zorder=0)
             ax.set_xlabel("phase (hrs)")
@@ -652,7 +674,6 @@ class TransitFitter(object):
         plt.close()
 
         # make transit depth vs transit number figure
-        transit_number = np.arange(len(t0_odd+t0_even))
         tdepths_fig, ax = plt.subplots(1, 1, figsize=(10,8))
         ax.set_title("transit depth check")
         ax.set_xlabel("transit number")
@@ -660,13 +681,13 @@ class TransitFitter(object):
         
         # plot each transit depth
         ax.axhline(1.0, c='k', ls='--')
-        ax.plot(transit_number,
+        ax.plot(np.sort(transits_odd+transits_even),
                 [(1 - np.square(np.array(depth_odd+depth_even)))[i] for i in np.argsort(t0_odd+t0_even)],
                 "kx", ms=12, zorder=10)
         
         # plot average transit depth
-        mean_depth = np.mean(np.array(depth_odd+depth_even)**2)
-        std_depth = np.std(np.array(depth_odd+depth_even)**2)
+        mean_depth = np.nanmean(np.array(depth_odd+depth_even)**2)
+        std_depth = np.nanstd(np.array(depth_odd+depth_even)**2)
         ax.axhline(1 - mean_depth, c='b', ls='-', lw=2, alpha=0.2)
         ax.axhline(1 - (mean_depth+std_depth), c='b', ls='--', lw=1)
         ax.axhline(1 - (mean_depth-std_depth), c='b', ls='--', lw=1)
@@ -683,10 +704,10 @@ class TransitFitter(object):
         ax = axes[0]
         ax.set_title("TTV check")
         ax.set_ylabel("transit center (d)")
-        ax.plot(transit_number, np.sort(t0_odd+t0_even), "kx", ms=12)
-        slope, intercept, _, _, _ = linregress(transit_number, np.sort(t0_odd+t0_even))
-        y_fit = linear_func(transit_number, slope, intercept)
-        ax.plot(transit_number, y_fit, 'b-')
+        ax.plot(np.sort(transits_odd+transits_even), np.sort(t0_odd+t0_even), "kx", ms=12)
+        slope, intercept, _, _, _ = linregress(np.sort(transits_odd+transits_even), np.sort(t0_odd+t0_even))
+        y_fit = linear_func(np.sort(transits_odd+transits_even), slope, intercept)
+        ax.plot(np.sort(transits_odd+transits_even), y_fit, 'b-')
         ax.text(0, np.sort(t0_odd+t0_even)[-2], " $P$ = {:.5f} d \n $T_0$ = {:.5f} d \n $y = Px + T_0$".format(slope, intercept))
         
         # plot residuals
@@ -694,7 +715,7 @@ class TransitFitter(object):
         ax.set_xlabel("transit number")
         ax.set_ylabel("residuals (d)")
         ax.axhline(0.0, c='b', ls='--', lw=1, zorder=0)
-        ax.plot(transit_number, np.sort(t0_odd+t0_even) - y_fit, "kx", ms=12)
+        ax.plot(np.sort(transits_odd+transits_even), np.sort(t0_odd+t0_even) - y_fit, "kx", ms=12)
 
         # save and close figure
         tce_dict.ttv_fig = ttv_fig
