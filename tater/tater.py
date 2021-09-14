@@ -373,6 +373,9 @@ class TransitFitter(object):
             text_file.write("\n LaTeX table : \n")
             text_file.write(planet_dict.fit_results.to_latex())
 
+        ttv_text_file = "{}/ttv_data_{}_0{}.txt".format(save_to_path, tic_no, planet_ind+1)
+        np.savetxt(ttv_text_file, planet_dict.ttv_data, header="transit #, t0")
+
         return None
 
 
@@ -390,7 +393,7 @@ class TransitFitter(object):
 
         intransit = np.zeros(len(time), dtype="bool")
 
-        for i in range(6):
+        for i in range(7):
 
             time, flux, flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
 
@@ -614,10 +617,11 @@ class TransitFitter(object):
         cmap = get_cmap('viridis')
         
         # plot odd transits
+        depth_odd = np.array(depth_odd)
         if len(transits_odd) > 0:
             ax = axes[1]
-            mean_depth_odd = np.mean(np.array(depth_odd)**2)
-            std_depth_odd = np.std(np.array(depth_odd)**2)
+            mean_depth_odd = np.mean(depth_odd[depth_odd > 0])**2
+            std_depth_odd = np.std(depth_odd[depth_odd > 0])**2
             ax.axhline(1 - mean_depth_odd, c='b', ls='-', lw=2, alpha=0.2)
             ax.axhline(1 - (mean_depth_odd+std_depth_odd), c='b', ls='--', lw=1)
             ax.axhline(1 - (mean_depth_odd-std_depth_odd), c='b', ls='--', lw=1)
@@ -637,10 +641,11 @@ class TransitFitter(object):
                 fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
 
         # plot even transits
+        depth_even = np.array(depth_even)
         if len(transits_even) > 0:
             ax = axes[0]
-            mean_depth_even = np.mean(np.array(depth_even)**2)
-            std_depth_even = np.std(np.array(depth_even)**2)
+            mean_depth_even = np.mean(depth_even[depth_even > 0])**2
+            std_depth_even = np.std(depth_even[depth_even > 0])**2
             ax.axhline(1 - mean_depth_even, c='b', ls='-', lw=2, alpha=0.2)
             ax.axhline(1 - (mean_depth_even+std_depth_even), c='b', ls='--', lw=1)
             ax.axhline(1 - (mean_depth_even-std_depth_even), c='b', ls='--', lw=1)
@@ -682,12 +687,12 @@ class TransitFitter(object):
         # plot each transit depth
         ax.axhline(1.0, c='k', ls='--')
         ax.plot(np.sort(transits_odd+transits_even),
-                [(1 - np.square(np.array(depth_odd+depth_even)))[i] for i in np.argsort(t0_odd+t0_even)],
+                [(1 - np.square(np.concatenate((depth_odd[depth_odd > 0], depth_even[depth_even > 0]))))[i] for i in np.argsort(t0_odd+t0_even)],
                 "kx", ms=12, zorder=10)
         
         # plot average transit depth
-        mean_depth = np.nanmean(np.array(depth_odd+depth_even)**2)
-        std_depth = np.nanstd(np.array(depth_odd+depth_even)**2)
+        mean_depth = np.nanmean(np.concatenate((depth_odd[depth_odd > 0], depth_even[depth_even > 0]))**2)
+        std_depth = np.nanstd(np.concatenate((depth_odd[depth_odd > 0], depth_even[depth_even > 0]))**2)
         ax.axhline(1 - mean_depth, c='b', ls='-', lw=2, alpha=0.2)
         ax.axhline(1 - (mean_depth+std_depth), c='b', ls='--', lw=1)
         ax.axhline(1 - (mean_depth-std_depth), c='b', ls='--', lw=1)
@@ -719,6 +724,7 @@ class TransitFitter(object):
 
         # save and close figure
         tce_dict.ttv_fig = ttv_fig
+        tce_dict.ttv_data = np.array((np.sort(transits_odd+transits_even), np.sort(t0_odd+t0_even))).T
         plt.close()
 
         
