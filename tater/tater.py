@@ -104,17 +104,17 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 15
-        self.nsteps = 10000
-        self.nburn = 5000
+        self.nsteps = 50000
+        self.nburn = 10000
 
 
-    def download_data(self, window_size=5.0, n_sectors=None, show_plot=False):
+    def download_data(self, window_size=3.0, n_sectors=None, show_plot=False):
         """Function to download data with Lightkurve and flatten raw light curve
 
         @param window_size: median smoothing filter window size in days
-        @type window_size: float (optional; default=5.0)
+        @type window_size: float (optional; default=3.0)
 
-        @param n_sectors: number of TESS sectors to load
+        @param n_sectors: number of TESS sectors to load (default is all)
         @type n_sectors: int (optional; default=None)
 
         @param show_plot: show plot of raw and flattened LC
@@ -189,8 +189,14 @@ class TransitFitter(object):
         return None
 
 
-    def find_planets(self, show_plots=False):
+    def find_planets(self, max_iterations=7, tce_threshold=8.0, show_plots=False):
         """Function to identify transits using TLS
+
+        @param max_iterations: maximum number of search iterations if SDE threshold is never reached
+        @type max_iterations: int (optional; default=7)
+
+        @param tce_threshold: Minimum Signal Detection Efficiency (SDE) that counts as a Threshold Crossing Event (TCE)
+        @type tce_threshold: float (optional; default=8.0)
 
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
@@ -199,7 +205,8 @@ class TransitFitter(object):
 
         """
 
-        TCEs = self._tls_search_(show_plots=True) if show_plots else self._tls_search_()
+        TCEs = self._tls_search_(max_iterations, tce_threshold, show_plots=True) if show_plots \
+            else self._tls_search_(max_iterations, tce_threshold)
 
         print("   vetting TCEs...")  # see Zink+2020
 
@@ -242,11 +249,11 @@ class TransitFitter(object):
 
             # initialize parameters
             theta_0 = dict(per=candidate.period,
-                           t0=candidate.T0,
-                           rp_rs=candidate.rp_rs,
-                           a_rs=self._P_to_a_(candidate.period),
-                           b=0.1
-                           )
+                                 t0=candidate.T0,
+                                 rp_rs=candidate.rp_rs,
+                                 a_rs=self._P_to_a_(candidate.period),
+                                 b=0.1
+                                )
 
             # Analyzing all the data is computationally inefficient. Therefore we will only fit a transit to
             # the data in and around the transits.
@@ -344,14 +351,14 @@ class TransitFitter(object):
         return None
 
 
-    def _tls_search_(self, max_iterations=7, tce_threshold=8.0, show_plots=False):
+    def _tls_search_(self, max_iterations, tce_threshold, show_plots=False):
         """Helper function to run TLS search for transits in light curve
 
         @param max_iterations: maximum number of search iterations if SDE threshold is never reached
-        @type max_iterations: int (optional; default=7)
+        @type max_iterations: int
 
         @param tce_threshold: Minimum Signal Detection Efficiency (SDE) that counts as a Threshold Crossing Event (TCE)
-        @type tce_threshold: float (optional; default=8.0)
+        @type tce_threshold: float
 
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
