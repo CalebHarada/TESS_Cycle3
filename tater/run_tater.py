@@ -11,7 +11,7 @@ transit_fitter = tater.TransitFitter(tic_id,
                                      )
 
 # download data and show plot
-transit_fitter.download_data(n_sectors=10, show_plot=True)
+transit_fitter.download_data(show_plot=True)
 
 # find planets
 planets = transit_fitter.find_planets(show_plots=False)
