@@ -15,14 +15,14 @@ transit_fitter = tater.TransitFitter(tic_id,
 
 # download data and show plot
 transit_fitter.download_data(window_size=3.0,
-                             n_sectors=5,  # number of TESS sectors to load (default: all)
+                             n_sectors=1,  # number of TESS sectors to load (default: all)
                              show_plot=True  # option to show light curve (default: false)
                              )
 
 # find planets
 planets = transit_fitter.find_planets(max_iterations=7,  # maximum number of search iterations (default: 7)
                                       tce_threshold=12.0,  # Minimum SDE that counts as a TCE (default: 8.0)
-                                      show_plots=False  # option to show periodogram and transit model (default: false)
+                                      show_plots=True  # option to show periodogram and transit model (default: false)
                                       )
 
 # do transit fits
