@@ -305,6 +305,11 @@ class TransitFitter(object):
         # get TIC number
         tic_no = self.tic_id[4:]
 
+        # make output directory
+        outputs_directory = "{}/outputs".format(os.getcwd())
+        if not os.path.isdir("{}/outputs"):
+            os.mkdir(outputs_directory)
+
         # directory to save results to
         save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
         if not os.path.isdir(save_to_path):
@@ -332,7 +337,7 @@ class TransitFitter(object):
             # random pdf stuff
             d = pdf.infodict()
             d['Title'] = 'TATER Report {}'.format(self.tic_id)
-            d['Author'] = 'Caleb K. Harada'
+            d['Author'] = 'TATER'
             d['Keywords'] = 'TESS, TLS, TATER'
             d['CreationDate'] = datetime.datetime.today()
 
@@ -392,7 +397,7 @@ class TransitFitter(object):
             # Get TLS power spectrum; use stellar params
             tls_results = tls.power(
                 R_star=self.R_star.value,
-                R_star_min=self.R_star.value - 0.3,
+                R_star_min=self.R_star.value - 0.3,  # kind of arbitrary for now?
                 R_star_max=self.R_star.value + 0.3,
                 M_star=self.M_star.value,
                 M_star_min=self.M_star.value - 0.3,
@@ -407,11 +412,13 @@ class TransitFitter(object):
 
                 # stop searching if there are no more TCEs
                 print(f"   No additional TCEs found above SDE={tce_threshold}.")
+                print("   TRANSIT SEARCH COMPLETE.")
                 print(" ")
                 break
 
             else:
                 print("   TCE at $P = {:.6f}$ days (SDE = {:.6f})".format(tls_results.period, tls_results.SDE))
+                print(f"   Transit search iteration {i} done.")
                 print(" ")
 
             # don't trust the TLS duration! (different cadences can mess this up)
@@ -714,7 +721,8 @@ class TransitFitter(object):
             ax.errorbar(*self._resample_(time_fold_even * 24, flux_fold_even),
                         fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
 
-            # format axes
+        # format axes
+        if (len(transits_even) > 0) & len(transits_odd) > 0:
             oddeven_fig.suptitle("$\\Delta\\delta$ = {:.6f} $\\pm$ {:.6f}".format(
                 abs(mean_depth_even - mean_depth_odd), np.sqrt(std_depth_even ** 2 + std_depth_odd ** 2))
             )
