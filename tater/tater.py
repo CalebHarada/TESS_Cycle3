@@ -178,10 +178,11 @@ class TransitFitter(object):
 
         # show plot if option is true
         if show_plot:
-            plt.show()
+            plt.ion(), plt.show(), plt.pause(0.001)
 
         # save figure
         self.lc_figure = fig
+
         plt.close()
 
         print("   done.")
@@ -471,7 +472,7 @@ class TransitFitter(object):
 
             # option to show plots
             if show_plots:
-                plt.show()
+                plt.ion(), plt.show(), plt.pause(0.001)
 
             # add "False Positive" keyword + plots to tls_results object
             tls_results.periodogram_fig = fig1
@@ -1194,7 +1195,7 @@ class TransitFitter(object):
 
         # option to show plot
         if show_plot:
-            plt.show()
+            plt.ion(), plt.show(), plt.pause(0.001)
 
         return walker_fig, corner_fig
 
@@ -1358,7 +1359,7 @@ class TransitFitter(object):
 
         # option to show plots
         if show_plot:
-            plt.show()
+            plt.ion(), plt.show(), plt.pause(0.001)
 
         return fig, fig2
 
