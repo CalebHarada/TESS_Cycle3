@@ -308,7 +308,7 @@ class TransitFitter(object):
 
         # make output directory
         outputs_directory = "{}/outputs".format(os.getcwd())
-        if not os.path.isdir("{}/outputs"):
+        if not os.path.isdir(outputs_directory):
             os.mkdir(outputs_directory)
 
         # directory to save results to
