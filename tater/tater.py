@@ -781,7 +781,8 @@ class TransitFitter(object):
         return None
 
 
-    def _model_single_transit_(self, t, t0, per, rp, a):
+    def _model_single_transit_(self, t, t0, per, rp, a, 
+        inc=90., baseline=1., q1=None, q2=None):
         """Helper function to generate a single batman transit model
 
         @param t: time
@@ -799,9 +800,28 @@ class TransitFitter(object):
         @param a: semi-major axis (units of stellar radius)
         @type a: float
 
+        @param inc: planet inclination (units of degrees)
+        @type inc: float (optional; default=90.)
+
+        @param baseline: average out-of-transit flux
+        @type baseline: float (optional; default=1.)
+
+        @param q1: Kipping et al. (2013) LD parameter #1
+        @type q1: float (optional; default=None)
+
+        @param q2: Kipping et al. (2013) LD parameter #2
+        @type q2: float (optional; default=None)
+
         @return: light curve flux
 
         """
+
+        # use specific user input LD parameters if given
+        if q1 is not None and q2 is not None:
+            u1 = 2*np.sqrt(q1)*q2
+            u2 = np.sqrt(q1)*(1-2*q2)
+        else:
+            u1,u2 = self.u1, self.u2
 
         # initialize batman model
         params = batman.TransitParams()
@@ -809,15 +829,18 @@ class TransitFitter(object):
         params.per = per  # orbital period
         params.rp = rp  # planet radius (in units of stellar radii)
         params.a = a  # semi-major axis (in units of stellar radii)
-        params.inc = 90.  # orbital inclination (in degrees)
+        params.inc = inc  # orbital inclination (in degrees)
         params.ecc = 0.  # eccentricity
         params.w = 90.  # longitude of periastron (in degrees)
-        params.u = [self.u1, self.u2]  # limb darkening coefficients []
+        params.u = [u1, u2]  # limb darkening coefficients []
         params.limb_dark = "quadratic"  # limb darkening model
         model = batman.TransitModel(params, t)  # initializes model
 
         # get model flux
         lc = model.light_curve(params)  # calculates light curve
+
+        # include effect of baseline != 1
+        lc *= baseline
 
         return lc
 
@@ -1499,3 +1522,36 @@ class TransitFitter(object):
         return None
 
 
+    def inject(t0, per, rp, a, inc, baseline=1., q1=None, q2=None):
+        """Helper function to generate a single batman transit model
+
+        @param t0: time of first transit
+        @type t0: float
+
+        @param per: period
+        @type per: float
+
+        @param rp: planet radius (units of stellar radius)
+        @type rp: float
+
+        @param a: semi-major axis (units of stellar radius)
+        @type a: float
+
+        @param inc: planet inclination (units of degrees)
+        @type inc: float (optional; default=90.)
+
+        @param baseline: average out-of-transit flux
+        @type baseline: float (optional; default=1.)
+
+        @param q1: Kipping et al. (2013) LD parameter #1
+        @type q1: float (optional; default=None)
+
+        @param q2: Kipping et al. (2013) LD parameter #2
+        @type q2: float (optional; default=None)
+
+        @return: initialized light curve with injected planet signal
+        """
+
+        lc = _model_single_transit_(self, t, t0, per, rp, a, 
+            inc=inc, baseline=baseline, q1=q1, q2=q2)
+        return np.array(self.f * lc)
