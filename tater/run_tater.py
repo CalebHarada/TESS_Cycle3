@@ -15,8 +15,8 @@ transit_fitter = tater.TransitFitter(tic_id,
 
 # download data and show plot
 transit_fitter.download_data(window_size=3.0,
-                             n_sectors=5,  # number of TESS sectors to load (default: all)
-                             show_plot=False  # option to show light curve (default: false)
+                             n_sectors=None,  # number of TESS sectors to load (default: all)
+                             show_plot=True  # option to show light curve (default: false)
                              )
 
 # find planets
