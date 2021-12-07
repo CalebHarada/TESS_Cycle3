@@ -190,8 +190,18 @@ class TransitFitter(object):
         return None
 
 
-    def find_planets(self, max_iterations=7, tce_threshold=8.0, show_plots=False):
+    def find_planets(self, time=None, flux=None, flux_err=None, 
+        max_iterations=7, tce_threshold=8.0, show_plots=False):
         """Function to identify transits using TLS
+
+        @param time: time array
+        @type time: numpy array (optional; default=None)
+
+        @param flux: flux array
+        @type flux: numpy array (optional; default=None)
+
+        @param flux_err: flux uncertainty array
+        @type flux_err: numpy array (optional; default=None)
 
         @param max_iterations: maximum number of search iterations if SDE threshold is never reached
         @type max_iterations: int (optional; default=7)
@@ -206,8 +216,11 @@ class TransitFitter(object):
 
         """
 
-        TCEs = self._tls_search_(max_iterations, tce_threshold, show_plots=True) if show_plots \
-            else self._tls_search_(max_iterations, tce_threshold)
+        TCEs = self._tls_search_(max_iterations, tce_threshold, 
+                                 time=time, flux=flux, flux_err=flux_err,
+                                 show_plots=True) if show_plots \
+            else self._tls_search_(max_iterations, tce_threshold,
+                                   time=time, flux=flux, flux_err=flux_err)
 
         print("   vetting TCEs...")  # see Zink+2020
 
@@ -357,7 +370,8 @@ class TransitFitter(object):
         return None
 
 
-    def _tls_search_(self, max_iterations, tce_threshold, show_plots=False):
+    def _tls_search_(self, max_iterations, tce_threshold, 
+        time=None, flux=None, flux_err=None, show_plots=False):
         """Helper function to run TLS search for transits in light curve
 
         @param max_iterations: maximum number of search iterations if SDE threshold is never reached
@@ -365,6 +379,15 @@ class TransitFitter(object):
 
         @param tce_threshold: Minimum Signal Detection Efficiency (SDE) that counts as a Threshold Crossing Event (TCE)
         @type tce_threshold: float
+
+        @param time: time array
+        @type time: numpy array (optional; default=None)
+
+        @param flux: flux array
+        @type flux: numpy array (optional; default=None)
+
+        @param flux_err: flux uncertainty array
+        @type flux_err: numpy array (optional; default=None)
 
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
@@ -374,9 +397,12 @@ class TransitFitter(object):
         """
 
         # copy time, flux, uncertainty arrays
-        time = self.time
-        flux = self.f
-        flux_err = self.f_err
+        if time is None:
+            time = self.time
+        if flux is None:
+            flux = self.f
+        if flux_err is None:
+            flux_err = self.f_err
 
         # set maximum period to search
         period_max = np.ptp(time) / 2  # require at least 2 transits
@@ -1564,3 +1590,180 @@ class TransitFitter(object):
         lc = _model_single_transit_(self, t, t0, per, rp, a, 
             inc=inc, baseline=baseline, q1=q1, q2=q2)
         return np.array(self.f * lc)
+
+
+    def recover(period, t0, t0_tolerance = 0.01,
+        max_iterations=7, tce_threshold=8.0, show_plots=False,
+        time=None, flux=None, flux_err=None):
+
+        """Function to recover signals from light curve
+
+        @param period: orbital period of signal to recover (units of days)
+        @type period: float
+
+        @param t0: transit time of signal to recover
+        @type t0: float
+
+        @param t0_tolerance: required fractional t0 agreement of signal
+        @type t0_tolerance: float
+
+        @param max_iterations: maximum number of search iterations if SDE threshold is never reached
+        @type max_iterations: int (optional; default=7)
+
+        @param tce_threshold: Minimum Signal Detection Efficiency (SDE) that counts as a Threshold Crossing Event (TCE)
+        @type tce_threshold: float (optional; default=8.0)
+
+        @param show_plots: show plots of periodogram and best TLS model
+        @type show_plots: bool (optional; default=False)
+
+        @param time: time array
+        @type time: numpy array (optional; default=None)
+
+        @param flux: flux array
+        @type flux: numpy array (optional; default=None)
+
+        @param flux_err: flux uncertainty array
+        @type flux_err: numpy array (optional; default=None)
+
+        @return: recovery success (bool)
+        """
+
+        TCEs = find_planets(time=time, flux=flux, flux_err=flux_err,
+            max_iterations=max_iterations, tce_threshold=tce_threshold, 
+            show_plots=show_plots)
+        recovery = False
+	for TCE in TCEs:
+            if abs(TCE.period - period)/TCE.period_uncertainty > 5:
+		continue
+            if abs(TCE.T0 - t0)/min(TCE.T0,t0) > t0_tolerance:
+                continue
+            if TCE.SDE > tce_threshold:
+                continue
+            recovery = True
+            break
+
+        return recovery
+
+
+    def explore(mstar, rstar, time=None, flux=None, flux_err=None,
+        baseline_min=1, baseline_max=1, baselines=None,
+        q1_min=0.25, q1_max=0.25, q1s=None,
+        q2_min=0.25, q2_max=0.25, q2s=None,
+        t0_min=None, t0_max=None, t0s=None,
+        period_min=0.5, period_max=200, periods=None,
+        radius_min=0.5, radius_max=4, radii=None,
+        b_min=0, b_max=1, bs=None,
+        N=25,seed=None):
+        """Function to explore multiple injections & recoveries
+
+        @param mstar: stellar mass (units of solar masses)
+        @type mstar: float
+
+        rstar: stellar radius (Solar radii)
+        time: input time array
+        flux: input flux array
+        flux_err: input flux uncertainties array
+        baseline_min: flux baseline minimum
+        baseline_max: flux baseline maximum
+        baselines: flux array (overrides baseline_min and baseline_max)
+        q1_min: q1 limb darkening minimum
+        q1_max: q1 limb darkening maximum
+        q1s: q1 limb darkening array (overrides q1_min and q1_max)
+        q2_min: q2 limb darkening minimum
+        q2_max: q2 limb darkening maximum
+        q2s: q2 limb darkening array (overrides q2_min and q2_max)
+        t0_min: t0 transit time minimum
+        t0_max: t0 transit time maximum
+        t0s: t0 transit time array (overrides t0_min and t0_max)
+        period_min: orbital period minimum (days)
+        period_max: orbital period maximum (days)
+        periods: orbital period array (overrides period_min and period_max)
+        radius_min: planetary radius minimum (Earth radii)
+        radius_max: planetary radius maximum (Earth radii)
+        radii: planetary radius array (overrides radius_min and radius_max)
+        b_min: impact parameter minimum
+        b_max: impact parameter maximum
+        bs: impact parameter array (overrides b_min and b_max)
+        N: number of sample draws to run and return
+        seed: random seed input to gaurantee repeatability
+        """
+
+        # random seed initialization
+        if isinstance(seed,int) or isinstance(seed,float):
+            np.random.seed(int(seed))
+
+        # function to calculate transit duration
+        def calc_t_tot(ars, inc, rprs, b, per):
+            '''
+            ars: semi-major axis / stellar radius
+            inc: inclination (degrees)
+            rprs: planet radius / stellar radius
+            b: impact parameter
+            per: orbital period
+
+            returns t_tot: transit duration (same units at per)
+            '''
+            asini = ars*np.sin(np.pi*inc/180)
+            t_tot = per*np.arcsin(np.sqrt((1+rprs)**2-b**2)/asini)/np.pi
+            return t_tot
+
+        # function to calculate inclination
+        def calc_inc(acosi,asini):
+            return 90. if acosi == 0. \
+                else (180./np.pi)*np.arctan(asini/acosi)
+
+        # Solar radius / Earth radius = 109.1
+        rsun_to_rearth = 109.1
+
+        # create input parameter samples (as needed)
+        if baselines is not None:
+            assert len(baselines) == N, 'baselines not length N'
+        else:
+            baselines = np.random.uniform(baseline_min,baseline_max,N)
+        if q1s is not None:
+            assert len(q1s) == N, 'q1s not length N'
+        else:
+            q1s = np.random.uniform(q1_min,q1_max,N)
+        if q2s is not None:
+            assert len(q2s) == N, 'q2s not length N'
+        else:
+            q2s = np.random.uniform(q2_min,q2_max,N)
+        if t0s is not None:
+            assert len(t0s) == N, 't0s not length N'
+        else:
+            if t0_min is None:
+                t0_min = min(t)
+            if t0_max is None:
+                t0_max = max(t)	
+            t0s = np.random.uniform(t0_min,t0_max,N)
+        if periods is not None:
+            assert len(periods) == N, 'periods not length N'
+        else:
+            periods = 10**np.random.uniform(
+                np.log10(period_min),np.log10(period_max),N)
+        if radii is not None:
+            assert len(radii) == N, 'radii not length N'
+        else:
+            radii = np.random.uniform(radius_min,radius_max,N)/\
+                (rsun_to_rearth*rstar)
+        if bs is not None:
+            assert len(bs) == N, 'bs not length N'
+        else:
+            bs = np.random.uniform(b_min,b_max,N)
+
+        # calculate remaining needed parameters
+        ars = calc_ars(mstar,periods,rstar)
+        asinis = np.sqrt(ars**2 - bs**2)
+        incs = list(map(calc_inc,bs,asinis))
+
+        # assemble parameters into single array
+        thetas = np.array((baselines,q1s,q2s,
+            t0s,periods,radii,ars,incs)).T
+
+        # helper function to map onto in order to perform injection/recovery
+        def helper(theta):
+            baseline,q1,q2,t0,per,rp,ars,inc = theta
+            return recover(per, t0, time=time, flux=inject(theta, time, flux),
+                flux_err=flux_err)
+        results = list(map(helper,thetas))
+        return thetas,results
