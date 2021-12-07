@@ -1632,9 +1632,9 @@ class TransitFitter(object):
             max_iterations=max_iterations, tce_threshold=tce_threshold, 
             show_plots=show_plots)
         recovery = False
-	for TCE in TCEs:
+        for TCE in TCEs:
             if abs(TCE.period - period)/TCE.period_uncertainty > 5:
-		continue
+                continue
             if abs(TCE.T0 - t0)/min(TCE.T0,t0) > t0_tolerance:
                 continue
             if TCE.SDE > tce_threshold:
