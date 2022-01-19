@@ -54,7 +54,7 @@ __status__ = " "
 class TransitFitter(object):
     """Main class for TATER"""
 
-    def __init__(self, tic_id, auto_params=False):
+    def __init__(self, tic_id, auto_params=False, ask_user=False, assume_solar=False):
         """Initialization
 
         @param tic_id: TIC ID number
@@ -62,6 +62,12 @@ class TransitFitter(object):
 
         @param auto_params: load stellar parameters automatically from MAST and interpolate LD coeffs
         @type auto_params: bool (optional; default=False)
+
+        @param ask_user: ask user to input info missing from MAST (ignored if auto_params=False)
+        @type ask_user: bool (default=False)
+
+        @param assume_solar: fill in solar estimates for missing MAST values (ignored if auto_params=False or ask_user=True)
+        @type assume_solar: bool (default=False)
         """
 
         # check user input
@@ -87,9 +93,13 @@ class TransitFitter(object):
         self.u2 = None
 
         # option to automatically get stellar params from MAST
+        self.missing = []
         if auto_params:
             print("   retrieving stellar parameters...")
-            self._get_stellar_params_()
+            missing = self._get_stellar_params_(
+                ask_user=ask_user, assume_solar=assume_solar)
+            # check and store whether MAST is missing info
+            self.missing = missing
 
         # initialize data arrays
         self.lc = None
@@ -191,7 +201,8 @@ class TransitFitter(object):
 
 
     def find_planets(self, time=None, flux=None, flux_err=None, 
-        max_iterations=7, tce_threshold=8.0, show_plots=False):
+        max_iterations=7, tce_threshold=8.0, 
+        period_min=0.8, period_max=100, show_plots=False):
         """Function to identify transits using TLS
 
         @param time: time array
@@ -209,6 +220,12 @@ class TransitFitter(object):
         @param tce_threshold: Minimum Signal Detection Efficiency (SDE) that counts as a Threshold Crossing Event (TCE)
         @type tce_threshold: float (optional; default=8.0)
 
+        @param period_min: minimum orbital period for TLS to explore
+        @type period_min: float (optional; default=0.8)
+
+        @param period_max: maximum orbital period for TLS to explore
+        @type period_max: float (optional; default=100)
+
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
 
@@ -218,9 +235,11 @@ class TransitFitter(object):
 
         TCEs = self._tls_search_(max_iterations, tce_threshold, 
                                  time=time, flux=flux, flux_err=flux_err,
+                                 period_min=period_min, period_max=period_max, 
                                  show_plots=True) if show_plots \
             else self._tls_search_(max_iterations, tce_threshold,
-                                   time=time, flux=flux, flux_err=flux_err)
+                                   time=time, flux=flux, flux_err=flux_err,
+                                   period_min=period_min, period_max=period_max)
 
         print("   vetting TCEs...")  # see Zink+2020
 
@@ -371,7 +390,8 @@ class TransitFitter(object):
 
 
     def _tls_search_(self, max_iterations, tce_threshold, 
-        time=None, flux=None, flux_err=None, show_plots=False):
+        time=None, flux=None, flux_err=None, 
+        period_min=0.8, period_max=100, show_plots=False):
         """Helper function to run TLS search for transits in light curve
 
         @param max_iterations: maximum number of search iterations if SDE threshold is never reached
@@ -389,6 +409,12 @@ class TransitFitter(object):
         @param flux_err: flux uncertainty array
         @type flux_err: numpy array (optional; default=None)
 
+        @param period_min: minimum orbital period for TLS to explore
+        @type period_min: float (optional; default=0.8)
+
+        @param period_max: maximum orbital period for TLS to explore
+        @type period_max: float (optional; default=100)
+
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
 
@@ -404,8 +430,9 @@ class TransitFitter(object):
         if flux_err is None:
             flux_err = self.f_err
 
-        # set maximum period to search
-        period_max = np.ptp(time) / 2  # require at least 2 transits
+        # set maximum period to search (if not given)
+        if period_max is None:
+            period_max = np.ptp(time) / 2  # require at least 2 transits
         if period_max > 100:
             period_max = 100 # no more than 100 days period
 
@@ -424,14 +451,14 @@ class TransitFitter(object):
             # Get TLS power spectrum; use stellar params
             tls_results = tls.power(
                 R_star=self.R_star.value,
-                R_star_min=self.R_star.value - 0.3,  # kind of arbitrary for now?
+                R_star_min=max(0.07,self.R_star.value - 0.3),  # kind of arbitrary for now?
                 R_star_max=self.R_star.value + 0.3,
                 M_star=self.M_star.value,
-                M_star_min=self.M_star.value - 0.3,
+                M_star_min=max(0.07,self.M_star.value - 0.3),
                 M_star_max=self.M_star.value + 0.3,
                 u=[self.u1, self.u2],
                 period_max=period_max,
-                period_min=0.8
+                period_min=period_min,use_threads=1
             )
 
             # check whether TCE threshold is reached
@@ -880,17 +907,24 @@ class TransitFitter(object):
         return lc
 
 
-    def _get_stellar_params_(self):
+    def _get_stellar_params_(self, ask_user=False, assume_solar=False):
         """Helper function that loads stellar parameters from MAST and interpolates LD coeffs from table
-        If no parameter found, asks user for input.
+        If no parameter found, asks user for input (unless ask_user=False, then function skips)
+        If no parameter found and ask_user=False, solar values can be assumed (only if assume_solar=True)
         LD source: https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
 
-        @param None
-        @type None
+        @param ask_user: ask user to input info missing from MAST
+        @type ask_user: bool (default=False)
 
-        @return None
+        @param assume_solar: fill in solar estimates for missing MAST values (ignored if ask_user=True)
+        @type assume_solar: bool (default=False)
+
+        @return missing (bool for whether MAST is missing some input)
 
         """
+
+        # initialize empty list for values missing from MAST
+        missing = []
 
         # get stellar params from MAST
         tic_table = Catalogs.query_object(self.tic_id, catalog="TIC", radius=0.01)[0]
@@ -899,31 +933,56 @@ class TransitFitter(object):
         self.R_star = tic_table["rad"] * u.R_sun
         if not np.isfinite(self.R_star.value):
             print("   Could not locate valid 'R_star'.")
-            self.R_star = self._ask_user_("R_star [R_sun]", limits=(0, 1000)) * u.R_sun
+            missing += ['R_star']
+            if ask_user:
+                self.R_star = self._ask_user_("R_star [R_sun]", limits=(0, 1000)) * u.R_sun
+            elif assume_solar:
+                print("   Solar value of 'R_star' used instead: 1 R_sun.")
+                self.R_star = 1. * u.R_sun
 
         # stellar mass
         self.M_star = tic_table["mass"] * u.M_sun
         if not np.isfinite(self.M_star.value):
             print("   Could not locate valid 'M_star'.")
-            self.M_star = self._ask_user_("M_star [M_sun]", limits=(0, 1000)) * u.M_sun
+            missing += ['M_star']
+            if ask_user:
+                self.M_star = self._ask_user_("M_star [M_sun]", limits=(0, 1000)) * u.M_sun
+            elif assume_solar:
+                print("   Solar value of 'M_star' used instead: 1 M_sun.")
+                self.M_star = 1. * u.M_sun
 
         # stellar surface gravity
         self.logg = tic_table["logg"]
         if not 0 < self.logg < 5:
             print("   Could not locate valid 'logg'.")
-            self.logg = self._ask_user_("logg", limits=(0, 5))
+            missing += ['logg']
+            if ask_user:
+                self.logg = self._ask_user_("logg", limits=(0, 5))
+            elif assume_solar:
+                print("   Solar value of 'logg' used instead: 4.4374.")
+                self.logg = 4.4374 # Smalley et al. (2005)
 
         # stellar effective temperature
         self.Teff = tic_table["Teff"]
         if not 3500 < self.Teff < 50000:
             print("   Could not locate valid 'Teff'.")
-            self.Teff = self._ask_user_("Teff [K]", limits=(3500, 50000))
+            missing += ['Teff']
+            if ask_user:
+                self.Teff = self._ask_user_("Teff [K]", limits=(3500, 50000))
+            elif assume_solar:
+                print("   Solar value of 'Teff' used instead: 5777 K.")
+                self.Teff = 5777 # https://en.wikipedia.org/wiki/Sun
 
         # stellar metallicity
         self.Fe_H = tic_table["MH"]
         if not -5 < self.Fe_H < 1:
             print("   Could not locate valid 'Fe_H'.")
-            self.Fe_H = self._ask_user_("Fe_H", limits=(-5, 1))
+            missing += ['Fe_H']
+            if ask_user:
+                self.Fe_H = self._ask_user_("Fe_H", limits=(-5, 1))
+            elif assume_solar:
+                print("   Solar value of 'Fe_H' used instead: 0.")
+                self.Fe_H = 0.
 
         # interpolate limb darkening coefficients
         # LD table from https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
@@ -946,7 +1005,16 @@ class TransitFitter(object):
         for i in star_info: print("   {}:\t{}".format(i, star_info[i]))
         print("------------------------------")
 
-        return None
+        tic_no = self.tic_id[4:]
+        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        if not os.path.isdir(save_to_path):
+            os.mkdir(save_to_path)
+        missing_text_file = "{}/missing_data_{}.txt".format(save_to_path, tic_no)
+        with open(missing_text_file,'w') as f:
+            for i in missing:
+                f.write(i + '\n')
+
+        return missing
 
 
     def _ask_user_(self, variable_name, limits=None):
@@ -1632,9 +1700,9 @@ class TransitFitter(object):
             max_iterations=max_iterations, tce_threshold=tce_threshold, 
             show_plots=show_plots)
         recovery = False
-	for TCE in TCEs:
+        for TCE in TCEs:
             if abs(TCE.period - period)/TCE.period_uncertainty > 5:
-		continue
+                continue
             if abs(TCE.T0 - t0)/min(TCE.T0,t0) > t0_tolerance:
                 continue
             if TCE.SDE > tce_threshold:
