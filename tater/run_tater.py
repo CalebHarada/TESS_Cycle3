@@ -1,17 +1,12 @@
 """ Script to run tater """
-import matplotlib
-matplotlib.use('agg')
 import tater
 import sys
+import matplotlib
+matplotlib.use('agg')
 
 
 # choose a planet
-#tic_id = 43647325  # WASP-35 b
-# tic_id = 230127302  # TOI-1246
-
-#tic_ids = [1003831, 1129033, 1528696, 2527981, 2670610, 2760710, 4616072, 4646810, 5109298, 5772442]
-#tic_ids = [309402106, 149301575, 300013921, 306472057, 389924075, 244161191, 384549882, 238004786, 34068865, 206609630]
-#tic_ids = [300013921, 306472057, 389924075, 244161191, 384549882, 238004786, 34068865, 206609630]
+#tic_ids = [43647325]  # WASP-35 b
 
 if len(sys.argv) > 1:
 	tic_ids = sys.argv[1:]
@@ -34,21 +29,18 @@ for i,tic_id in enumerate(tic_ids):
 		ask_user=False, # do not ask user for input (default: false)
 		assume_solar=True # fill in solar values if not found on MAST (default: false)
 		)
-	#if transit_fitter.missing != []:
-	#	continue
 
 	# download data and show plot
 	transit_fitter.download_data(window_size=3.0,
 		n_sectors=None,  # number of TESS sectors to load (default: all)
-		#show_plot=True  # option to show light curve (default: false)
+		show_plot=False  # option to show light curve (default: false)
 		show_plot=False  # option to show light curve (default: false)
 		)
 
 	# find planets
 	planets = transit_fitter.find_planets(max_iterations=7,  # maximum number of search iterations (default: 7)
-		#tce_threshold=12.0,  # Minimum SDE that counts as a TCE (default: 8.0)
 		tce_threshold=8.0,  # Minimum SDE that counts as a TCE (default: 8.0)
-		#period_min=10., # Minimum TLS period to explore
+		period_min=0.8, # Minimum TLS period to explore
 		show_plots=False  # option to show periodogram and transit model (default: false)
 		)
 
