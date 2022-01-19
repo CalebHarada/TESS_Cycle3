@@ -34,7 +34,6 @@ for i,tic_id in enumerate(tic_ids):
 	transit_fitter.download_data(window_size=3.0,
 		n_sectors=None,  # number of TESS sectors to load (default: all)
 		show_plot=False  # option to show light curve (default: false)
-		show_plot=False  # option to show light curve (default: false)
 		)
 
 	# find planets
