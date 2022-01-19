@@ -1,8 +1,8 @@
 """ Script to run tater """
-import tater
-import sys
 import matplotlib
 matplotlib.use('agg')
+import sys
+import tater
 
 
 # choose a planet
