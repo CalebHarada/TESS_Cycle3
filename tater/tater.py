@@ -825,7 +825,7 @@ class TransitFitter(object):
         slope, intercept, _, _, _ = linregress(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even))
         y_fit = linear_func(np.sort(transits_odd + transits_even), slope, intercept)
         ax.plot(np.sort(transits_odd + transits_even), y_fit, 'b-')
-        ax.text(0, np.sort(t0_odd + t0_even)[-2],
+        ax.text(0, np.sort(t0_odd + t0_even)[-1],
                 " $P$ = {:.5f} d \n $T_0$ = {:.5f} d \n $y = Px + T_0$".format(slope, intercept))
 
         # plot residuals
