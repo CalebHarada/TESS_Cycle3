@@ -444,6 +444,9 @@ class TransitFitter(object):
 
             # clean arrays for TLS, masking out out-of-transit flux
             time, flux, flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
+            # leave loop if previous TLS iterations have completely masked all data
+            if len(time) == 0:
+                break
 
             # initializes TLS
             tls = transitleastsquares(time, flux, flux_err)
