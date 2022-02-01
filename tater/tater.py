@@ -284,7 +284,7 @@ class TransitFitter(object):
             theta_0 = dict(per=candidate.period,
                                  t0=candidate.T0,
                                  rp_rs=candidate.rp_rs,
-                                 a_rs=self._P_to_a_(candidate.period),
+                                 a_rs=max(1,self._P_to_a_(candidate.period)),
                                  b=0.1
                                 )
 
@@ -444,6 +444,9 @@ class TransitFitter(object):
 
             # clean arrays for TLS, masking out out-of-transit flux
             time, flux, flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
+            # leave loop if previous TLS iterations have completely masked all data
+            if len(time) == 0:
+                break
 
             # initializes TLS
             tls = transitleastsquares(time, flux, flux_err)
@@ -1157,7 +1160,7 @@ class TransitFitter(object):
         if (theta_0["per"] - 0.1 < per < theta_0["per"] + 0.1) \
                 and (theta_0["t0"] - 0.083 < t0 < theta_0["t0"] + 0.083) \
                 and (0.0 < rp < 1.5 * theta_0["rp_rs"]) \
-                and (0.5 * theta_0["a_rs"] < a < 2.0 * theta_0["a_rs"]) \
+                and (max(1,0.5 * theta_0["a_rs"]) < a < 2.0 * theta_0["a_rs"]) \
                 and (0.0 < b < 1.0):
             prior = 0.0
 
