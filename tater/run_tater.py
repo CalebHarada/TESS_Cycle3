@@ -32,7 +32,7 @@ for i,tic_id in enumerate(tic_ids):
 
 	# download data and show plot
 	transit_fitter.download_data(window_size=3.0,
-		n_sectors=None,  # number of TESS sectors to load (default: all)
+		n_sectors=1,  # number of TESS sectors to load (default: all)
 		show_plot=False  # option to show light curve (default: false)
 		)
 
@@ -40,12 +40,13 @@ for i,tic_id in enumerate(tic_ids):
 	planets = transit_fitter.find_planets(max_iterations=7,  # maximum number of search iterations (default: 7)
 		tce_threshold=8.0,  # Minimum SDE that counts as a TCE (default: 8.0)
 		period_min=0.8, # Minimum TLS period to explore
-		show_plots=False  # option to show periodogram and transit model (default: false)
+		show_plots=False,  # option to show periodogram and transit model (default: false)
+		save_results = True  # save all results to PDF/txt files (default: true)
 		)
 
 	
-	if len(transit_fitter.planet_candidates) >= 1:
-		# do transit fits
-		transit_fitter.fit_transits(show_plots=False,  # show MCMC plots (default: false)
+	if len(transit_fitter.TCEs) >= 1:
+		# do vetting
+		transit_fitter.vet_TCEs(
 			save_results=True  # save all results to PDF/txt files (default: true)
-			)
+		)

@@ -113,9 +113,9 @@ class TransitFitter(object):
 
         # initialize MCMC options
         self.ndim = len(self.labels)
-        self.nwalkers = 15
-        self.nsteps = 50000
-        self.nburn = 10000
+        self.nwalkers = 100
+        self.nsteps = 350
+        self.nburn = 250
 
 
     def download_data(self, window_size=3.0, n_sectors=None, show_plot=False):
@@ -202,8 +202,8 @@ class TransitFitter(object):
 
     def find_planets(self, time=None, flux=None, flux_err=None, 
         max_iterations=7, tce_threshold=8.0, 
-        period_min=0.8, period_max=100, show_plots=False):
-        """Function to identify transits using TLS
+        period_min=0.8, period_max=100, show_plots=False, save_results=True):
+        """Function to identify transits using TLS, then perform model fit with MCMC
 
         @param time: time array
         @type time: numpy array (optional; default=None)
@@ -229,6 +229,9 @@ class TransitFitter(object):
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
 
+        @param save_results: save results of fit
+        @type save_results: bool (optional; default=True)
+
         @return self.planet_candidates: list of planet candidates
 
         """
@@ -241,56 +244,27 @@ class TransitFitter(object):
                                    time=time, flux=flux, flux_err=flux_err,
                                    period_min=period_min, period_max=period_max)
 
-        print("   vetting TCEs...")  # see Zink+2020
-
-        # previous planet check
-        TCEs = self._vet_previous_planets_(TCEs)
-
-        for TCE in TCEs:
-            if TCE.FP == False:
-                self.planet_candidates.append(TCE)
-
-        print(" ")
-        print("   vetting recovered {} planet candidate(s) from {} TCE(s).".format(len(self.planet_candidates),
-                                                                                   len(self.TCEs)))
-
-        return self.planet_candidates
-
-
-    def fit_transits(self, show_plots=False, save_results=True):
-        """Function to perform MCMC fit
-
-        @param show_plots: show MCMC fit plots
-        @type show_plots: bool (optional; default=False)
-
-        @param save_results: save results of fit
-        @type save_results: bool (optional; default=True)
-
-        @return None
-
-        """
-
         # check whether any planets were found
-        if not len(self.planet_candidates) >= 1:
+        if not len(TCEs) >= 1:
             raise ValueError("No planet candidates were found.")
 
         # do MCMC fit for each planet in candidate list
-        for i, candidate in enumerate(self.planet_candidates):
+        for i, TCE in enumerate(TCEs):
 
-            print("   Running MCMC for planet candidate with $P = {:.6f}$ days (SDE={:.6f})".format(candidate.period,
-                                                                                                    candidate.SDE))
+            print("   Running MCMC for TCE with $P = {:.6f}$ days (SDE={:.6f})".format(TCE.period,
+                                                                                                    TCE.SDE))
 
             # initialize parameters
-            theta_0 = dict(per=candidate.period,
-                                 t0=candidate.T0,
-                                 rp_rs=candidate.rp_rs,
-                                 a_rs=max(1,self._P_to_a_(candidate.period)),
-                                 b=0.1
-                                )
+            theta_0 = dict(per=TCE.period,
+                           t0=TCE.T0,
+                           rp_rs=TCE.rp_rs,
+                           a_rs=max(1, self._P_to_a_(TCE.period)),
+                           b=0.1
+                           )
 
             # Analyzing all the data is computationally inefficient. Therefore we will only fit a transit to
             # the data in and around the transits.
-            time, flux, flux_err = self._get_intransit_flux_(candidate)
+            time, flux, flux_err = self._get_intransit_flux_(TCE)
 
             # run the MCMC (option to show plots)
             if show_plots:
@@ -301,25 +275,63 @@ class TransitFitter(object):
                     theta_0, time, flux, flux_err)
 
             # save figures to candidate object dictionary
-            candidate.fit_results = planet_fit
-            candidate.mcmc_fig = walker_fig
-            candidate.corner_fig = corner_fig
-            candidate.result_fig = best_fig
-            candidate.result_full_fig = best_full_fig
+            TCE.fit_results = planet_fit
+            TCE.mcmc_fig = walker_fig
+            TCE.corner_fig = corner_fig
+            TCE.result_fig = best_fig
+            TCE.result_full_fig = best_full_fig
 
             plt.close()
 
             # save results of fit
             if save_results:
                 print("   saving results...")
-                self._save_results_pdf_(candidate, i)
-                print("   done.")
+                self._save_results_pdf_(TCE, i)
+                print("   MCMC COMPLETE.")
+                print(" ")
 
-        # save summary figure
+        return self.TCEs
+
+
+    def vet_TCEs(self, save_results=True):
+        """Function to perform vetting of TCEs (to promote to candidate)
+
+        @param save_results: save results of fit
+        @type save_results: bool (optional; default=True)
+
+        @return None
+
+        """
+
+        print("   Vetting TCEs...")  # ref Zink+2020
+
+        # previous planet check
+        self.TCEs = self._vet_previous_planets_(self.TCEs)
+
+        # other vetting functions here:
+        # ............
+        # ............
+        # ............
+        # ............
+        # ............
+
+
+        for TCE in self.TCEs:
+            if TCE.FP == "No":
+                self.planet_candidates.append(TCE)
+
+        print("   Vetting recovered {} planet candidate(s) from {} TCE(s).".format(len(self.planet_candidates),
+                                                                                   len(self.TCEs)))
+        print("   VETTING COMPLETE.")
+
+        # save summary figure of vetted candidates
         if save_results:
             self._save_results_image_()
 
-        return None
+        print(" ")
+        print("   TATER DONE.")
+
+        return self.planet_candidates
 
 
     def _save_results_pdf_(self, planet_dict, planet_ind):
@@ -533,7 +545,7 @@ class TransitFitter(object):
             # add "False Positive" keyword + plots to tls_results object
             tls_results.periodogram_fig = fig1
             tls_results.model_fig = fig2
-            tls_results.FP = False
+            tls_results.FP = "No"
 
             plt.close()
 
@@ -616,31 +628,43 @@ class TransitFitter(object):
 
         """
 
-        for i in tqdm(range(len(TCE_list)), desc="   checking previous signals"):
+        for i in tqdm(range(len(TCE_list)), desc="   -> previous planet check"):
             for j in range(0, i):
 
-                P_A, P_B = np.sort((TCE_list[i].period, TCE_list[j].period))
+                fit_results["median"]["$P$"]
+
+                P_A, P_B = np.sort((TCE_list[i].fit_results["median"]["$P$"],
+                                    TCE_list[j].fit_results["median"]["$P$"]))
                 delta_P = (P_B - P_A) / P_A
                 sigma_P = np.sqrt(2) * erfcinv(np.abs(delta_P - round(delta_P)))
 
-                delta_t0 = np.abs(TCE_list[i].T0 - TCE_list[j].T0) / TCE_list[i].duration
+                delta_t0 = np.abs(TCE_list[i].fit_results["median"]["$T_0$"] -
+                                  TCE_list[j].fit_results["median"]["$T_0$"]) / TCE_list[i].duration
 
-                delta_SE1 = np.abs(TCE_list[i].T0 - TCE_list[j].T0 + TCE_list[i].period / 2) / TCE_list[i].duration
+                delta_SE1 = np.abs(TCE_list[i].fit_results["median"]["$T_0$"] -
+                                   TCE_list[j].fit_results["median"]["$T_0$"] +
+                                   TCE_list[i].fit_results["median"]["$P$"] / 2) / TCE_list[i].duration
 
-                delta_SE2 = np.abs(TCE_list[i].T0 - TCE_list[j].T0 - TCE_list[i].period / 2) / TCE_list[i].duration
+                delta_SE2 = np.abs(TCE_list[i].fit_results["median"]["$T_0$"] -
+                                   TCE_list[j].fit_results["median"]["$T_0$"] -
+                                   TCE_list[i].fit_results["median"]["$P$"] / 2) / TCE_list[i].duration
 
-                if (sigma_P > 2.0) & (TCE_list[j].FP == True):
-                    TCE_list[i].FP = True
+                if (sigma_P > 2.0) & (TCE_list[j].FP != "No"):
+                    TCE_list[i].FP = "Previous"
+                    print("      FAIL.")
                     break
 
                 if (sigma_P > 2.0) & (delta_t0 < 1):
-                    TCE_list[i].FP = True
+                    TCE_list[i].FP = "Previous"
+                    print("      FAIL.")
                     break
 
                 elif (sigma_P > 2.0) & ((delta_SE1 < 1) | (delta_SE2 < 1)):
-                    TCE_list[i].FP = True
+                    TCE_list[i].FP = "Previous"
+                    print("      FAIL.")
                     break
 
+        print("      PASS.")
         return TCE_list
 
 
@@ -1225,7 +1249,7 @@ class TransitFitter(object):
 
         """
 
-        np.random.seed(42069)
+        np.random.seed(42)
 
         # initial state
         pos = np.array([theta_0["per"], theta_0["t0"], theta_0["rp_rs"], theta_0["a_rs"], theta_0["b"]]) \
