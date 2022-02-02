@@ -114,8 +114,8 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 100
-        self.nsteps = 350
-        self.nburn = 250
+        self.nsteps = 3500
+        self.nburn = 2500
 
 
     def download_data(self, window_size=3.0, n_sectors=None, show_plot=False):
@@ -630,8 +630,6 @@ class TransitFitter(object):
 
         for i in tqdm(range(len(TCE_list)), desc="   -> previous planet check"):
             for j in range(0, i):
-
-                fit_results["median"]["$P$"]
 
                 P_A, P_B = np.sort((TCE_list[i].fit_results["median"]["$P$"],
                                     TCE_list[j].fit_results["median"]["$P$"]))
