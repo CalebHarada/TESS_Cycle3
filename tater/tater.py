@@ -114,8 +114,8 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 100
-        self.nsteps = 3500
-        self.nburn = 2500
+        self.nsteps = 350
+        self.nburn = 250
 
 
     def download_data(self, window_size=3.0, n_sectors=None, show_plot=False):
@@ -251,8 +251,7 @@ class TransitFitter(object):
         # do MCMC fit for each planet in candidate list
         for i, TCE in enumerate(TCEs):
 
-            print("   Running MCMC for TCE with $P = {:.6f}$ days (SDE={:.6f})".format(TCE.period,
-                                                                                                    TCE.SDE))
+            print("   Running MCMC for TCE with $P = {:.6f}$ days (SDE={:.6f})".format(TCE.period, TCE.SDE))
 
             # initialize parameters
             theta_0 = dict(per=TCE.period,
@@ -262,9 +261,17 @@ class TransitFitter(object):
                            b=0.1
                            )
 
+            # mask previous transits
+            intransit = np.zeros(len(self.time_raw), dtype=bool)
+            if i > 0:
+                for previous_tce in TCEs[0:i]:
+                    intransit += transit_mask(self.time_raw, previous_tce.period,
+                                             2.5 * previous_tce.duration,
+                                             previous_tce.T0)
+
             # Analyzing all the data is computationally inefficient. Therefore we will only fit a transit to
             # the data in and around the transits.
-            time, flux, flux_err = self._get_intransit_flux_(TCE)
+            time, flux, flux_err = self._get_intransit_flux_(TCE, msk=intransit)
 
             # run the MCMC (option to show plots)
             if show_plots:
@@ -286,7 +293,7 @@ class TransitFitter(object):
             # save results of fit
             if save_results:
                 print("   saving results...")
-                self._save_results_pdf_(TCE, i)
+                self._save_tce_pdf_(TCE, i)
                 print("   MCMC COMPLETE.")
                 print(" ")
 
@@ -308,6 +315,9 @@ class TransitFitter(object):
         # previous planet check
         self.TCEs = self._vet_previous_planets_(self.TCEs)
 
+        # odd even test
+        self.TCEs = self._vet_odd_even_(self.TCEs)
+
         # other vetting functions here:
         # ............
         # ............
@@ -316,9 +326,11 @@ class TransitFitter(object):
         # ............
 
 
-        for TCE in self.TCEs:
+        for i, TCE in enumerate(self.TCEs):
             if TCE.FP == "No":
                 self.planet_candidates.append(TCE)
+            if save_results:
+                self._save_vetting_pdf_(TCE, i)
 
         print("   Vetting recovered {} planet candidate(s) from {} TCE(s).".format(len(self.planet_candidates),
                                                                                    len(self.TCEs)))
@@ -334,8 +346,8 @@ class TransitFitter(object):
         return self.planet_candidates
 
 
-    def _save_results_pdf_(self, planet_dict, planet_ind):
-        """Helper function to save figures and fit results to one PDF file
+    def _save_tce_pdf_(self, planet_dict, planet_ind):
+        """Helper function to save TCE figures and fit results to one PDF file
 
         @param planet_dict: TLS result/planet parameter dictionary
         @type planet_dict: dict
@@ -367,9 +379,9 @@ class TransitFitter(object):
             pdf.savefig(self.lc_figure)
             pdf.savefig(planet_dict.periodogram_fig)
             pdf.savefig(planet_dict.model_fig)
-            pdf.savefig(planet_dict.oddeven_fig)
-            pdf.savefig(planet_dict.tdepths_fig)
-            pdf.savefig(planet_dict.ttv_fig)
+            #pdf.savefig(planet_dict.oddeven_fig)
+            #pdf.savefig(planet_dict.tdepths_fig)
+            #pdf.savefig(planet_dict.ttv_fig)
             pdf.savefig(planet_dict.mcmc_fig)
             pdf.savefig(planet_dict.corner_fig)
             pdf.savefig(planet_dict.result_fig)
@@ -387,7 +399,7 @@ class TransitFitter(object):
             d['CreationDate'] = datetime.datetime.today()
 
         # save summary of fit results to a txt file (also in LaTeX format!)
-        with open("{}/tater_summary_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1), "w") as text_file:
+        with open("{}/tater_report_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1), "w") as text_file:
             text_file.write("{}\n \n".format(self.tic_id))
             for key in planet_dict.keys():
                 text_file.write("{} : {} \n".format(key, planet_dict[key]))
@@ -395,8 +407,60 @@ class TransitFitter(object):
             text_file.write(planet_dict.fit_results.to_latex())
 
         # save transit times to a separate txt file for TTV analysis
-        ttv_text_file = "{}/ttv_data_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1)
-        np.savetxt(ttv_text_file, planet_dict.ttv_data, header="transit #, t0")
+        # ttv_text_file = "{}/ttv_data_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1)
+        # np.savetxt(ttv_text_file, planet_dict.ttv_data, header="transit #, t0")
+
+        return None
+
+
+    def _save_vetting_pdf_(self, planet_dict, planet_ind):
+        """Helper function to save vetting figures and fit results to a PDF file
+
+        @param planet_dict: TLS result/planet parameter dictionary
+        @type planet_dict: dict
+
+        @param planet_ind: index for current planet
+        @type planet_ind: int
+
+        @return None
+
+        """
+
+        # get TIC number
+        tic_no = self.tic_id[4:]
+
+        # make output directory
+        outputs_directory = "{}/outputs".format(os.getcwd())
+        if not os.path.isdir(outputs_directory):
+            os.mkdir(outputs_directory)
+
+        # directory to save results to
+        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        if not os.path.isdir(save_to_path):
+            os.mkdir(save_to_path)
+
+        # use PdfPages to make a new PDF document
+        with PdfPages("{}/tater_vet_{}_0{}.pdf".format(save_to_path, tic_no, planet_ind + 1)) as pdf:
+
+            # save figures to the PDF
+            pdf.savefig(planet_dict.periodogram_fig)
+            pdf.savefig(planet_dict.result_fig)
+            pdf.savefig(planet_dict.corner_fig)
+            pdf.savefig(planet_dict.oddeven_fig)
+            #pdf.savefig(planet_dict.tdepths_fig)
+            #pdf.savefig(planet_dict.ttv_fig)
+
+        # save summary of fit results to a txt file (also in LaTeX format!)
+        with open("{}/tater_vet_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1), "w") as text_file:
+            text_file.write("{}\n \n".format(self.tic_id))
+            for key in planet_dict.keys():
+                text_file.write("{} : {} \n".format(key, planet_dict[key]))
+            text_file.write("\n LaTeX table : \n")
+            text_file.write(planet_dict.fit_results.to_latex())
+
+        # save transit times to a separate txt file for TTV analysis
+        # ttv_text_file = "{}/ttv_data_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1)
+        # np.savetxt(ttv_text_file, planet_dict.ttv_data, header="transit #, t0")
 
         return None
 
@@ -549,25 +613,28 @@ class TransitFitter(object):
 
             plt.close()
 
-            # make planet vetting figures
-            self._generate_vet_figures_(tls_results)
-
-            # append tls_results to TCE list
-            self.TCEs.append(tls_results)
-
             # mask the detected transit signal before next iteration of TLS
             # length of mask is 2.5 x the transit duration
             intransit = transit_mask(time, tls_results.period, 2.5 * tls_results.duration, tls_results.T0)
 
+            # make planet vetting figures
+            # self._generate_vet_figures_(tls_results)
+
+            # append tls_results to TCE list
+            self.TCEs.append(tls_results)
+
         return self.TCEs
 
 
-    def _get_intransit_flux_(self, tce_dict):
+    def _get_intransit_flux_(self, tce_dict, msk=[]):
         """Helper function to extract and re-normalize in-transit flux
         to save compute time for MCMC fit
 
         @param tce_dict: TCE results dictionary
         @type tce_dict: dict
+
+        @param msk: previous transit mask
+        @type msk: array
 
         @return new_t, new_f, new_ferr: normalized in-transit time, flux, and uncert
 
@@ -585,31 +652,35 @@ class TransitFitter(object):
         new_f = np.array([])
         new_ferr = np.array([])
 
+        # create previous transit mask if none provided
+        if len(msk) == 0:
+            msk = np.zeros(len(self.time_raw), dtype=bool)
+
         # normalize each transit individually
         for t0 in transit_times:
 
             # consider data within 3 x the transit duration of the central transit time
-            transit_msk = (self.time_raw > t0 - 3 * duration) & (self.time_raw < t0 + 3 * duration)
+            transit_msk = (self.time_raw[~msk] > t0 - 3 * duration) & (self.time_raw[~msk] < t0 + 3 * duration)
 
             # we will normalize by the out-of-transit flux between
             # 3x and 1.5x the transit duration away from the central transit time
-            pre_msk = (self.time_raw > t0 - 3 * duration) & (self.time_raw < t0 - 1.5 * duration)
-            post_msk = (self.time_raw < t0 + 3 * duration) & (self.time_raw > t0 + 1.5 * duration)
+            pre_msk = (self.time_raw[~msk] > t0 - 3 * duration) & (self.time_raw[~msk] < t0 - 1.5 * duration)
+            post_msk = (self.time_raw[~msk] < t0 + 3 * duration) & (self.time_raw[~msk] > t0 + 1.5 * duration)
             trend_msk = pre_msk | post_msk
 
             # require at least 20 data points during, before, and after transit
             if (np.sum(pre_msk) > 20) & (np.sum(post_msk) > 20) & (np.sum(transit_msk) > 20):
 
                 # fit linear model ("trend") to out-of-transit data
-                slope, intercept, _, _, _ = linregress(self.time_raw[trend_msk], self.f_raw[trend_msk])
-                y_trend = linear_func(self.time_raw[transit_msk], slope, intercept)
+                slope, intercept, _, _, _ = linregress(self.time_raw[~msk][trend_msk], self.f_raw[~msk][trend_msk])
+                y_trend = linear_func(self.time_raw[~msk][transit_msk], slope, intercept)
 
                 # normalize the transit by the linear trend; save to array
-                new_f = np.concatenate((new_f, self.f_raw[transit_msk] / y_trend))
+                new_f = np.concatenate((new_f, self.f_raw[~msk][transit_msk] / y_trend))
 
                 # save transit time and uncert arrays
-                new_t = np.concatenate((new_t, self.time_raw[transit_msk]))
-                new_ferr = np.concatenate((new_ferr, self.ferr_raw[transit_msk] / self.f_raw[transit_msk]))
+                new_t = np.concatenate((new_t, self.time_raw[~msk][transit_msk]))
+                new_ferr = np.concatenate((new_ferr, self.ferr_raw[~msk][transit_msk] / self.f_raw[~msk][transit_msk]))
 
         # clean arrays
         new_t, new_f, new_ferr = cleaned_array(new_t, new_f, new_ferr)
@@ -663,6 +734,165 @@ class TransitFitter(object):
                     break
 
         print("      PASS.")
+        return TCE_list
+
+
+    def _vet_odd_even_(self, TCE_list):
+        """Helper function to do odd vs even check defined by Zink+2020
+        https://ui.adsabs.harvard.edu/abs/2020AJ....159..154Z/abstract
+
+        @param TCE_list: list of TCE dictionaries
+        @type TCE_list: list
+
+        @return vetted TCE list
+
+        """
+
+        for i in tqdm(range(len(TCE_list)), desc="   -> odd vs even transit test"):
+
+            # mask previous transits
+            previous_intransit = np.zeros(len(self.time_raw), dtype=bool)
+            if i > 0:
+                for previous_tce in TCE_list[0:i]:
+                    previous_intransit += transit_mask(self.time_raw, previous_tce.period,
+                                              2.5 * previous_tce.duration,
+                                              previous_tce.T0)
+
+            # Only care about data near transits
+            time, flux, flux_err = self._get_intransit_flux_(TCE_list[i], msk=previous_intransit)
+
+            # get useful info from dict
+            transit_times = TCE_list[i].transit_times
+            duration = TCE_list[i].duration
+            period = TCE_list[i].period
+            depth = TCE_list[i].depth
+
+            # empty arrays
+            transits_odd = []
+            t0_odd = []
+            time_odd = []
+            flux_odd = []
+            depth_odd = []
+            tfold_odd = []
+
+            transits_even = []
+            t0_even = []
+            time_even = []
+            flux_even = []
+            depth_even = []
+            tfold_even = []
+
+            # fit each individual transit separately
+            for j, t0 in enumerate(transit_times):
+
+                transit_msk = (time > t0 - 3 * duration) & (time < t0 + 3 * duration)
+
+                # Fit transit model --> get t0, depths for single transit
+                p0 = [t0, np.sqrt(depth)]
+                popt, _ = curve_fit(
+                    lambda t, t0_best, rp_best: self._model_single_transit_(
+                        t, t0=t0_best,
+                        per=period,
+                        rp=rp_best,
+                        a=self._P_to_a_(period)
+                    ), time[transit_msk], flux[transit_msk], p0, sigma=flux_err[transit_msk]
+                )
+
+                # odd transits
+                if j % 2:
+                    transits_odd.append(j)
+                    t0_odd.append(popt[0])
+                    time_odd.append(time[transit_msk])
+                    flux_odd.append(flux[transit_msk])
+                    depth_odd.append(popt[1])
+
+                # even transits
+                else:
+                    transits_even.append(j)
+                    t0_even.append(popt[0])
+                    time_even.append(time[transit_msk])
+                    flux_even.append(flux[transit_msk])
+                    depth_even.append(popt[1])
+
+            # make odd vs. even figure
+            gridspec = dict(wspace=0.0, hspace=0.0, width_ratios=[1, 1])
+            oddeven_fig, axes = plt.subplots(1, 2, figsize=(10, 6), sharey=True, gridspec_kw=gridspec)
+            cmap = get_cmap('viridis')
+
+            # plot odd transits
+            depth_odd = np.array(depth_odd)
+            if len(transits_odd) > 0:
+                ax = axes[1]
+                mean_depth_odd = np.mean(depth_odd[depth_odd > 0])
+                std_depth_odd = np.std(depth_odd[depth_odd > 0])
+                ax.axhline(1 - mean_depth_odd**2, c='b', ls='-', lw=2, alpha=0.2)
+                ax.axhline(1 - (mean_depth_odd**2 + std_depth_odd**2), c='b', ls='--', lw=1)
+                ax.axhline(1 - (mean_depth_odd**2 - std_depth_odd**2), c='b', ls='--', lw=1)
+                for k in range(len(time_odd)):
+                    color_values = np.linspace(0, 1, len(time_odd))
+                    t_fold = (time_odd[k] - t0_odd[k] + 0.5 * period) % period - 0.5 * period
+                    tfold_odd.append(t_fold)
+                    ax.scatter(t_fold * 24, flux_odd[k], s=4, alpha=0.5, color=cmap(color_values[k]),
+                               rasterized=True,
+                               label=transits_odd[k])
+                ax.legend(title="transit #")
+                # binned
+                flux_fold_odd = np.array([item for sublist in flux_odd for item in sublist])
+                time_fold_odd = np.array([item for sublist in tfold_odd for item in sublist])
+                flux_fold_odd = flux_fold_odd[np.argsort(time_fold_odd)]
+                time_fold_odd = np.sort(time_fold_odd)
+                ax.errorbar(*self._resample_(time_fold_odd * 24, flux_fold_odd),
+                            fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
+
+            # plot even transits
+            depth_even = np.array(depth_even)
+            if len(transits_even) > 0:
+                ax = axes[0]
+                mean_depth_even = np.mean(depth_even[depth_even > 0])
+                std_depth_even = np.std(depth_even[depth_even > 0])
+                ax.axhline(1 - mean_depth_even**2, c='b', ls='-', lw=2, alpha=0.2)
+                ax.axhline(1 - (mean_depth_even**2 + std_depth_even**2), c='b', ls='--', lw=1)
+                ax.axhline(1 - (mean_depth_even**2 - std_depth_even**2), c='b', ls='--', lw=1)
+                ax.set_ylabel("relative flux")
+                for k in range(len(time_even)):
+                    color_values = np.linspace(0, 1, len(time_even))
+                    t_fold = (time_even[k] - t0_even[k] + 0.5 * period) % period - 0.5 * period
+                    tfold_even.append(t_fold)
+                    ax.scatter(t_fold * 24, flux_even[k], s=4, alpha=0.5, color=cmap(color_values[k]),
+                               rasterized=True,
+                               label=transits_even[k])
+                ax.legend(title="transit #")
+                # binned
+                flux_fold_even = np.array([item for sublist in flux_even for item in sublist])
+                time_fold_even = np.array([item for sublist in tfold_even for item in sublist])
+                flux_fold_even = flux_fold_even[np.argsort(time_fold_even)]
+                time_fold_even = np.sort(time_fold_even)
+                ax.errorbar(*self._resample_(time_fold_even * 24, flux_fold_even),
+                            fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
+
+            # test discrepancy significance
+            Z = abs(mean_depth_even - mean_depth_odd) / np.sqrt(std_depth_even ** 2 + std_depth_odd ** 2)
+            TCE_list[i].Z_oddeven = Z
+
+            if Z > 5:
+                TCE_list[i].FP = "odd_even"
+                print("      FAIL.")
+
+            else:
+                print("      PASS.")
+
+            # format axes
+            if (len(transits_even) > 0) & (len(transits_odd) > 0):
+                oddeven_fig.suptitle("$Z$ = {:.3f}".format(Z))
+
+            for ax in axes:
+                ax.axhline(1.0, c='k', ls='--', lw=1, zorder=0)
+                ax.set_xlabel("phase (hrs)")
+
+            # save and close figure
+            TCE_list[i].oddeven_fig = oddeven_fig
+            plt.close()
+
         return TCE_list
 
 
