@@ -47,6 +47,9 @@ __maintainer__ = "Caleb K. Harada"
 __email__ = "charada@berkeley.edu"
 __status__ = " "
 
+# ignore plotting warning
+plt.rcParams.update({'figure.max_open_warning': 0})
+
 
 # </header>
 # Code begins here.
@@ -312,6 +315,9 @@ class TransitFitter(object):
 
         print("   Vetting TCEs...")  # ref Zink+2020
 
+        # get ephemerides
+        self._get_ephems_(self.TCEs)
+
         # previous planet check
         self.TCEs = self._vet_previous_planets_(self.TCEs)
 
@@ -379,9 +385,6 @@ class TransitFitter(object):
             pdf.savefig(self.lc_figure)
             pdf.savefig(planet_dict.periodogram_fig)
             pdf.savefig(planet_dict.model_fig)
-            #pdf.savefig(planet_dict.oddeven_fig)
-            #pdf.savefig(planet_dict.tdepths_fig)
-            #pdf.savefig(planet_dict.ttv_fig)
             pdf.savefig(planet_dict.mcmc_fig)
             pdf.savefig(planet_dict.corner_fig)
             pdf.savefig(planet_dict.result_fig)
@@ -405,10 +408,6 @@ class TransitFitter(object):
                 text_file.write("{} : {} \n".format(key, planet_dict[key]))
             text_file.write("\n LaTeX table : \n")
             text_file.write(planet_dict.fit_results.to_latex())
-
-        # save transit times to a separate txt file for TTV analysis
-        # ttv_text_file = "{}/ttv_data_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1)
-        # np.savetxt(ttv_text_file, planet_dict.ttv_data, header="transit #, t0")
 
         return None
 
@@ -447,20 +446,24 @@ class TransitFitter(object):
             pdf.savefig(planet_dict.result_fig)
             pdf.savefig(planet_dict.corner_fig)
             pdf.savefig(planet_dict.oddeven_fig)
-            #pdf.savefig(planet_dict.tdepths_fig)
-            #pdf.savefig(planet_dict.ttv_fig)
+            pdf.savefig(planet_dict.tdepths_fig)
+            pdf.savefig(planet_dict.ttv_fig)
 
-        # save summary of fit results to a txt file (also in LaTeX format!)
+        # save summary of fit results to a txt file
         with open("{}/tater_vet_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1), "w") as text_file:
             text_file.write("{}\n \n".format(self.tic_id))
-            for key in planet_dict.keys():
-                text_file.write("{} : {} \n".format(key, planet_dict[key]))
-            text_file.write("\n LaTeX table : \n")
-            text_file.write(planet_dict.fit_results.to_latex())
+            text_file.write("Period : {} \n".format(planet_dict.period))
+            if planet_dict.FP == "No":
+                text_file.write("PASS.\n \n")
+            else:
+                text_file.write("FAIL.\n")
+            text_file.write("FP : {} \n".format(planet_dict.FP))
+            text_file.write("Z_oddeven : {} \n".format(planet_dict.Z_oddeven))
+
 
         # save transit times to a separate txt file for TTV analysis
-        # ttv_text_file = "{}/ttv_data_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1)
-        # np.savetxt(ttv_text_file, planet_dict.ttv_data, header="transit #, t0")
+        ttv_text_file = "{}/tater_transittimes_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1)
+        np.savetxt(ttv_text_file, planet_dict.ttv_data, header="transit #, t0, uncert")
 
         return None
 
@@ -699,7 +702,9 @@ class TransitFitter(object):
 
         """
 
-        for i in tqdm(range(len(TCE_list)), desc="   -> previous planet check"):
+        print("   -> previous planet check:")
+
+        for i in range(len(TCE_list)):
             for j in range(0, i):
 
                 P_A, P_B = np.sort((TCE_list[i].fit_results["median"]["$P$"],
@@ -720,20 +725,21 @@ class TransitFitter(object):
 
                 if (sigma_P > 2.0) & (TCE_list[j].FP != "No"):
                     TCE_list[i].FP = "Previous"
-                    print("      FAIL.")
                     break
 
                 if (sigma_P > 2.0) & (delta_t0 < 1):
                     TCE_list[i].FP = "Previous"
-                    print("      FAIL.")
                     break
 
                 elif (sigma_P > 2.0) & ((delta_SE1 < 1) | (delta_SE2 < 1)):
                     TCE_list[i].FP = "Previous"
-                    print("      FAIL.")
                     break
 
-        print("      PASS.")
+            if TCE_list[i].FP == "No":
+                print("      {}...PASS.".format(i))
+            else:
+                print("      {}...FAIL.".format(i))
+
         return TCE_list
 
 
@@ -748,7 +754,9 @@ class TransitFitter(object):
 
         """
 
-        for i in tqdm(range(len(TCE_list)), desc="   -> odd vs even transit test"):
+        print("   -> odd vs even transit test:")
+
+        for i in range(len(TCE_list)):
 
             # mask previous transits
             previous_intransit = np.zeros(len(self.time_raw), dtype=bool)
@@ -787,6 +795,10 @@ class TransitFitter(object):
 
                 transit_msk = (time > t0 - 3 * duration) & (time < t0 + 3 * duration)
 
+                # skip if there are fewer than 20 data points
+                if np.sum(transit_msk) < 20:
+                    continue
+
                 # Fit transit model --> get t0, depths for single transit
                 p0 = [t0, np.sqrt(depth)]
                 popt, _ = curve_fit(
@@ -823,8 +835,8 @@ class TransitFitter(object):
             depth_odd = np.array(depth_odd)
             if len(transits_odd) > 0:
                 ax = axes[1]
-                mean_depth_odd = np.mean(depth_odd[depth_odd > 0])
-                std_depth_odd = np.std(depth_odd[depth_odd > 0])
+                mean_depth_odd = np.mean(depth_odd[depth_odd < 0.9])
+                std_depth_odd = np.std(depth_odd[depth_odd < 0.9])
                 ax.axhline(1 - mean_depth_odd**2, c='b', ls='-', lw=2, alpha=0.2)
                 ax.axhline(1 - (mean_depth_odd**2 + std_depth_odd**2), c='b', ls='--', lw=1)
                 ax.axhline(1 - (mean_depth_odd**2 - std_depth_odd**2), c='b', ls='--', lw=1)
@@ -848,8 +860,8 @@ class TransitFitter(object):
             depth_even = np.array(depth_even)
             if len(transits_even) > 0:
                 ax = axes[0]
-                mean_depth_even = np.mean(depth_even[depth_even > 0])
-                std_depth_even = np.std(depth_even[depth_even > 0])
+                mean_depth_even = np.mean(depth_even[depth_even < 0.9])
+                std_depth_even = np.std(depth_even[depth_even < 0.9])
                 ax.axhline(1 - mean_depth_even**2, c='b', ls='-', lw=2, alpha=0.2)
                 ax.axhline(1 - (mean_depth_even**2 + std_depth_even**2), c='b', ls='--', lw=1)
                 ax.axhline(1 - (mean_depth_even**2 - std_depth_even**2), c='b', ls='--', lw=1)
@@ -876,10 +888,10 @@ class TransitFitter(object):
 
             if Z > 5:
                 TCE_list[i].FP = "odd_even"
-                print("      FAIL.")
+                print("      {}...FAIL.".format(i))
 
             else:
-                print("      PASS.")
+                print("      {}...PASS.".format(i))
 
             # format axes
             if (len(transits_even) > 0) & (len(transits_odd) > 0):
@@ -893,207 +905,132 @@ class TransitFitter(object):
             TCE_list[i].oddeven_fig = oddeven_fig
             plt.close()
 
+            # Now plot transit depth vs transit number
+            tdepths_fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+            ax.set_title("transit depth check")
+            ax.set_xlabel("transit number")
+            ax.set_ylabel("transit depth")
+
+            ax.axhline(1.0, c='k', ls='--')
+
+            # plot each transit depth
+            odd_depths = np.array([(1 - np.square(depth_odd))[i] for i in np.argsort(t0_odd)])
+            even_depths = np.array([(1 - np.square(depth_even))[i] for i in np.argsort(t0_even)])
+            ax.plot(np.sort(transits_odd)[odd_depths > 0.1], odd_depths[odd_depths > 0.1],
+                    "k.", ms=12, zorder=10, label="odd")
+            ax.plot(np.sort(transits_even)[even_depths > 0.1], even_depths[even_depths > 0.1],
+                    "kx", ms=12, zorder=10, label="even")
+            ax.legend()
+
+            # plot average transit depth
+            mean_depth = np.nanmean(np.concatenate((odd_depths[odd_depths > 0.1], even_depths[even_depths > 0.1])))
+            std_depth = np.nanstd(np.concatenate((odd_depths[odd_depths > 0.1], even_depths[even_depths > 0.1])))
+            ax.axhline(mean_depth, c='b', ls='-', lw=2, alpha=0.2)
+            ax.axhline(mean_depth + std_depth, c='b', ls='--', lw=1)
+            ax.axhline(mean_depth - std_depth, c='b', ls='--', lw=1)
+
+            # save and close figure
+            TCE_list[i].tdepths_fig = tdepths_fig
+            plt.close()
+
         return TCE_list
 
 
-    def _generate_vet_figures_(self, tce_dict):
-        """Helper function to produce plots with vetting diagnostics
+    def _get_ephems_(self, TCE_list):
+        """Helper function to get transit times and fit linear ephemeris
 
-        @param tce_dict: TCE results dictionary
-        @type tce_dict: dict
+        @param TCE_list: list of TCE dictionaries
+        @type TCE_list: list
+
+        @return None
 
         """
 
-        # function to draw a line
-        linear_func = lambda x, m, b: m * x + b
+        print("   -> saving transit times")
 
-        # get useful info from dict
-        transit_times = tce_dict.transit_times
-        duration = tce_dict.duration
-        period = tce_dict.period
-        depth = tce_dict.depth
+        for i in range(len(TCE_list)):
 
-        # empty arrays
-        transits_odd = []
-        t0_odd = []
-        time_odd = []
-        flux_odd = []
-        depth_odd = []
-        tfold_odd = []
+            # mask previous transits
+            previous_intransit = np.zeros(len(self.time_raw), dtype=bool)
+            if i > 0:
+                for previous_tce in TCE_list[0:i]:
+                    previous_intransit += transit_mask(self.time_raw, previous_tce.period,
+                                                       2.5 * previous_tce.duration,
+                                                       previous_tce.T0)
 
-        transits_even = []
-        t0_even = []
-        time_even = []
-        flux_even = []
-        depth_even = []
-        tfold_even = []
+            # Only care about data near transits
+            time, flux, flux_err = self._get_intransit_flux_(TCE_list[i], msk=previous_intransit)
 
-        # fit each individual transit separately
-        for i, t0 in enumerate(transit_times):
+            # get useful info from dict
+            transit_times = TCE_list[i].transit_times
+            duration = TCE_list[i].duration
+            period = TCE_list[i].period
+            depth = TCE_list[i].depth
 
-            # masks for ootr trend and in-transit
-            transit_msk = (self.time_raw > t0 - 3 * duration) & (self.time_raw < t0 + 3 * duration)
-            pre_msk = (self.time_raw > t0 - 3 * duration) & (self.time_raw < t0 - 1.5 * duration)
-            post_msk = (self.time_raw < t0 + 3 * duration) & (self.time_raw > t0 + 1.5 * duration)
-            trend_msk = pre_msk | post_msk
+            # empty arrays
+            transit_number_list = []
+            t0_list = []
+            t0_uncert_list = []
 
-            # requires at leaast 20 data points during, before, and after transit
-            if (np.sum(pre_msk) > 20) & (np.sum(post_msk) > 20) & (np.sum(transit_msk) > 20):
+            # fit each individual transit separately
+            for j, t0 in enumerate(transit_times):
 
-                # fit line to ootr, normalize new flux
-                slope, intercept, _, _, _ = linregress(self.time_raw[trend_msk], self.f_raw[trend_msk])
-                y_trend = linear_func(self.time_raw[transit_msk], slope, intercept)
-                time_new = self.time_raw[transit_msk]
-                f_new = self.f_raw[transit_msk] / y_trend
-                ferr_new = self.ferr_raw[transit_msk] / self.f_raw[transit_msk]
+                transit_msk = (time > t0 - 3 * duration) & (time < t0 + 3 * duration)
 
-                # Fit transit model to each transit individually --> get t0, depths per transit
+                # skip if there are fewer than 20 data points
+                if np.sum(transit_msk) < 20:
+                    continue
+
+                # Fit transit model --> get t0, depths for single transit
                 p0 = [t0, np.sqrt(depth)]
-                popt, _ = curve_fit(lambda t, t0_best, rp_best: self._model_single_transit_(t,
-                                                                                            t0=t0_best,
-                                                                                            per=period,
-                                                                                            rp=rp_best,
-                                                                                            a=self._P_to_a_(period)
-                                                                                            ),
-                                    time_new, f_new, p0, sigma=ferr_new
-                                    )
+                popt, pcov = curve_fit(
+                    lambda t, t0_best, rp_best: self._model_single_transit_(
+                        t, t0=t0_best,
+                        per=period,
+                        rp=rp_best,
+                        a=self._P_to_a_(period)
+                    ), time[transit_msk], flux[transit_msk], p0, sigma=flux_err[transit_msk]
+                )
 
-                # odd transits
-                if i % 2:
-                    transits_odd.append(i)
-                    t0_odd.append(popt[0])
-                    time_odd.append(time_new)
-                    flux_odd.append(f_new)
-                    depth_odd.append(popt[1])
+                # get 1-sigma uncert from cov matrix
+                perr = np.sqrt(np.diag(pcov))
 
-                # even transits
-                else:
-                    transits_even.append(i)
-                    t0_even.append(popt[0])
-                    time_even.append(time_new)
-                    flux_even.append(f_new)
-                    depth_even.append(popt[1])
+                # save results to arrays
+                transit_number_list.append(j)
+                t0_list.append(popt[0])
+                t0_uncert_list.append(perr[0])
 
-        # make odd vs. even figure
-        gridspec = dict(wspace=0.0, hspace=0.0, width_ratios=[1, 1])
-        oddeven_fig, axes = plt.subplots(1, 2, figsize=(10, 6), sharey=True, gridspec_kw=gridspec)
-        cmap = get_cmap('viridis')
 
-        # plot odd transits
-        depth_odd = np.array(depth_odd)
-        if len(transits_odd) > 0:
-            ax = axes[1]
-            mean_depth_odd = np.mean(depth_odd[depth_odd > 0]) ** 2
-            std_depth_odd = np.std(depth_odd[depth_odd > 0]) ** 2
-            ax.axhline(1 - mean_depth_odd, c='b', ls='-', lw=2, alpha=0.2)
-            ax.axhline(1 - (mean_depth_odd + std_depth_odd), c='b', ls='--', lw=1)
-            ax.axhline(1 - (mean_depth_odd - std_depth_odd), c='b', ls='--', lw=1)
-            ax.set_title("odd ($\\delta$ = {:.5f} $\\pm$ {:.5f})".format(mean_depth_odd, std_depth_odd))
-            for i in range(len(time_odd)):
-                color_values = np.linspace(0, 1, len(time_odd))
-                t_fold = (time_odd[i] - t0_odd[i] + 0.5 * period) % period - 0.5 * period
-                tfold_odd.append(t_fold)
-                ax.scatter(t_fold * 24, flux_odd[i], s=4, alpha=0.5, color=cmap(color_values[i]), rasterized=True,
-                           label=transits_odd[i])
-            ax.legend(title="transit #", frameon=False)
-            # binned
-            flux_fold_odd = np.array([item for sublist in flux_odd for item in sublist])
-            time_fold_odd = np.array([item for sublist in tfold_odd for item in sublist])
-            flux_fold_odd = flux_fold_odd[np.argsort(time_fold_odd)]
-            time_fold_odd = np.sort(time_fold_odd)
-            ax.errorbar(*self._resample_(time_fold_odd * 24, flux_fold_odd),
-                        fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
+            # make transit TTV figure
+            gridspec = dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
+            ttv_fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw=gridspec)
 
-        # plot even transits
-        depth_even = np.array(depth_even)
-        if len(transits_even) > 0:
+            linear_func = lambda x, m, b: m * x + b
+
+            # plot transit center time vs. transit number
             ax = axes[0]
-            mean_depth_even = np.mean(depth_even[depth_even > 0]) ** 2
-            std_depth_even = np.std(depth_even[depth_even > 0]) ** 2
-            ax.axhline(1 - mean_depth_even, c='b', ls='-', lw=2, alpha=0.2)
-            ax.axhline(1 - (mean_depth_even + std_depth_even), c='b', ls='--', lw=1)
-            ax.axhline(1 - (mean_depth_even - std_depth_even), c='b', ls='--', lw=1)
-            ax.set_title("even ($\\delta$ = {:.5f} $\\pm$ {:.5f})".format(mean_depth_even, std_depth_even))
-            ax.set_ylabel("relative flux")
-            for i in range(len(time_even)):
-                color_values = np.linspace(0, 1, len(time_even))
-                t_fold = (time_even[i] - t0_even[i] + 0.5 * period) % period - 0.5 * period
-                tfold_even.append(t_fold)
-                ax.scatter(t_fold * 24, flux_even[i], s=4, alpha=0.5, color=cmap(color_values[i]), rasterized=True,
-                           label=transits_even[i])
-            ax.legend(title="transit #", frameon=False)
-            # binned
-            flux_fold_even = np.array([item for sublist in flux_even for item in sublist])
-            time_fold_even = np.array([item for sublist in tfold_even for item in sublist])
-            flux_fold_even = flux_fold_even[np.argsort(time_fold_even)]
-            time_fold_even = np.sort(time_fold_even)
-            ax.errorbar(*self._resample_(time_fold_even * 24, flux_fold_even),
-                        fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
+            ax.set_title("Ephemeris check")
+            ax.set_ylabel("transit center (d)")
+            ax.errorbar(np.array(transit_number_list), np.array(t0_list),
+                        yerr=np.array(t0_uncert_list), fmt='k.', ms=12)
+            slope, intercept, _, _, _ = linregress(np.array(transit_number_list), np.array(t0_list))
+            y_fit = linear_func(np.array(transit_number_list), slope, intercept)
+            ax.plot(np.array(transit_number_list), y_fit, 'b-')
+            ax.text(0, t0_list[-1],
+                    " $P$ = {:.5f} d \n $T_0$ = {:.5f} d \n $y = Px + T_0$".format(slope, intercept))
 
-        # format axes
-        if (len(transits_even) > 0) & len(transits_odd) > 0:
-            oddeven_fig.suptitle("$\\Delta\\delta$ = {:.6f} $\\pm$ {:.6f}".format(
-                abs(mean_depth_even - mean_depth_odd), np.sqrt(std_depth_even ** 2 + std_depth_odd ** 2))
-            )
+            # plot residuals
+            ax = axes[1]
+            ax.set_xlabel("transit number")
+            ax.set_ylabel("residuals (d)")
+            ax.axhline(0.0, c='b', ls='--', lw=1, zorder=0)
+            ax.errorbar(np.array(transit_number_list), np.array(t0_list) - y_fit,
+                        yerr=np.array(t0_uncert_list), fmt='k.', ms=12)
 
-        for ax in axes:
-            ax.axhline(1.0, c='k', ls='--', lw=1, zorder=0)
-            ax.set_xlabel("phase (hrs)")
-
-        # save and close figure
-        tce_dict.oddeven_fig = oddeven_fig
-        plt.close()
-
-        # make transit depth vs transit number figure
-        tdepths_fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-        ax.set_title("transit depth check")
-        ax.set_xlabel("transit number")
-        ax.set_ylabel("transit depth")
-
-        # plot each transit depth
-        all_depths = np.array(
-            [(1 - np.square(np.concatenate((depth_odd, depth_even))))[i] for i in np.argsort(t0_odd + t0_even)])
-        ax.axhline(1.0, c='k', ls='--')
-        ax.plot(np.sort(transits_odd + transits_even)[all_depths > 0], all_depths[all_depths > 0],
-                "kx", ms=12, zorder=10)
-
-        # plot average transit depth
-        mean_depth = np.nanmean(np.concatenate((depth_odd[depth_odd > 0], depth_even[depth_even > 0])) ** 2)
-        std_depth = np.nanstd(np.concatenate((depth_odd[depth_odd > 0], depth_even[depth_even > 0])) ** 2)
-        ax.axhline(1 - mean_depth, c='b', ls='-', lw=2, alpha=0.2)
-        ax.axhline(1 - (mean_depth + std_depth), c='b', ls='--', lw=1)
-        ax.axhline(1 - (mean_depth - std_depth), c='b', ls='--', lw=1)
-
-        # save and close figure
-        tce_dict.tdepths_fig = tdepths_fig
-        plt.close()
-
-        # make transit TTV figure
-        gridspec = dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
-        ttv_fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw=gridspec)
-
-        # plot transit center time vs. transit number
-        ax = axes[0]
-        ax.set_title("TTV check")
-        ax.set_ylabel("transit center (d)")
-        ax.plot(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even), "kx", ms=12)
-        slope, intercept, _, _, _ = linregress(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even))
-        y_fit = linear_func(np.sort(transits_odd + transits_even), slope, intercept)
-        ax.plot(np.sort(transits_odd + transits_even), y_fit, 'b-')
-        ax.text(0, np.sort(t0_odd + t0_even)[-1],
-                " $P$ = {:.5f} d \n $T_0$ = {:.5f} d \n $y = Px + T_0$".format(slope, intercept))
-
-        # plot residuals
-        ax = axes[1]
-        ax.set_xlabel("transit number")
-        ax.set_ylabel("residuals (d)")
-        ax.axhline(0.0, c='b', ls='--', lw=1, zorder=0)
-        ax.plot(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even) - y_fit, "kx", ms=12)
-
-        # save and close figure
-        tce_dict.ttv_fig = ttv_fig
-        tce_dict.ttv_data = np.array((np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even))).T
-        plt.close()
+            # save and close figure
+            TCE_list[i].ttv_fig = ttv_fig
+            TCE_list[i].ttv_data = np.array((transit_number_list, t0_list, t0_uncert_list)).T
+            plt.close()
 
         return None
 
