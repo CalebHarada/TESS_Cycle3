@@ -671,8 +671,11 @@ class TransitFitter(object):
             post_msk = (self.time_raw[~msk] < t0 + 3 * duration) & (self.time_raw[~msk] > t0 + 1.5 * duration)
             trend_msk = pre_msk | post_msk
 
-            # require at least 20 data points during, before, and after transit
-            if (np.sum(pre_msk) > 20) & (np.sum(post_msk) > 20) & (np.sum(transit_msk) > 20):
+            # require at least N_min data points during, before, and after transit
+            cadence = 2. / 1440   # 2-min cadence
+            N_min_sides = 0.8 * (1.5 * duration / cadence)   # 80% complete data
+            N_min_total = 0.7 * (6 * duration / cadence)   # 70% complete data
+            if (np.sum(pre_msk) > N_min_sides) & (np.sum(post_msk) > N_min_sides) & (np.sum(transit_msk) > N_min_total):
 
                 # fit linear model ("trend") to out-of-transit data
                 slope, intercept, _, _, _ = linregress(self.time_raw[~msk][trend_msk], self.f_raw[~msk][trend_msk])
@@ -794,10 +797,6 @@ class TransitFitter(object):
             for j, t0 in enumerate(transit_times):
 
                 transit_msk = (time > t0 - 3 * duration) & (time < t0 + 3 * duration)
-
-                # skip if there are fewer than 20 data points
-                if np.sum(transit_msk) < 20:
-                    continue
 
                 # Fit transit model --> get t0, depths for single transit
                 p0 = [t0, np.sqrt(depth)]
@@ -976,10 +975,6 @@ class TransitFitter(object):
             for j, t0 in enumerate(transit_times):
 
                 transit_msk = (time > t0 - 3 * duration) & (time < t0 + 3 * duration)
-
-                # skip if there are fewer than 20 data points
-                if np.sum(transit_msk) < 20:
-                    continue
 
                 # Fit transit model --> get t0, depths for single transit
                 p0 = [t0, np.sqrt(depth)]
