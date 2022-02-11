@@ -1343,8 +1343,8 @@ class TransitFitter(object):
         # set uniform priors
         if (theta_0["per"] - 0.1 < per < theta_0["per"] + 0.1) \
                 and (theta_0["t0"] - 0.083 < t0 < theta_0["t0"] + 0.083) \
-                and (0.0 < rp < 1.5 * theta_0["rp_rs"]) \
-                and (max(1,0.5 * theta_0["a_rs"]) < a < 2.0 * theta_0["a_rs"]) \
+                and (0.0 < rp < 0.3) \
+                and (max(1, 0.5 * theta_0["a_rs"]) < a < 10.0 * theta_0["a_rs"]) \
                 and (0.0 < b < 1.0):
             prior = 0.0
 
