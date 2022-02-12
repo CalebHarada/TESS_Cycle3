@@ -321,6 +321,9 @@ class TransitFitter(object):
         # previous planet check
         self.TCEs = self._vet_previous_planets_(self.TCEs)
 
+        # line test
+        self.TCEs = self._vet_line_test_(self.TCEs)
+
         # odd even test
         self.TCEs = self._vet_odd_even_(self.TCEs)
 
@@ -343,7 +346,7 @@ class TransitFitter(object):
         print("   VETTING COMPLETE.")
 
         # save summary figure of vetted candidates
-        if save_results:
+        if save_results & (self.planet_candidates.append(TCE) != None):
             self._save_results_image_()
 
         print(" ")
@@ -445,6 +448,7 @@ class TransitFitter(object):
             pdf.savefig(planet_dict.periodogram_fig)
             pdf.savefig(planet_dict.result_fig)
             pdf.savefig(planet_dict.corner_fig)
+            pdf.savefig(planet_dict.line_test_fig)
             pdf.savefig(planet_dict.oddeven_fig)
             pdf.savefig(planet_dict.tdepths_fig)
             pdf.savefig(planet_dict.ttv_fig)
@@ -458,7 +462,8 @@ class TransitFitter(object):
             else:
                 text_file.write("FAIL.\n")
             text_file.write("FP : {} \n".format(planet_dict.FP))
-            text_file.write("Z_oddeven : {} \n".format(planet_dict.Z_oddeven))
+            text_file.write("Z_straightline : {} (>0?) \n".format(planet_dict.Z_straightline))
+            text_file.write("Z_oddeven : {} (<5?) \n".format(planet_dict.Z_oddeven))
 
 
         # save transit times to a separate txt file for TTV analysis
@@ -798,6 +803,12 @@ class TransitFitter(object):
 
                 transit_msk = (time > t0 - 3 * duration) & (time < t0 + 3 * duration)
 
+                # skip if there are fewer than 70% of data points
+                cadence = 2. / 1440  # 2-min cadence
+                N_min = 0.7 * (6 * duration / cadence)
+                if np.sum(transit_msk) < N_min:
+                    continue
+
                 # Fit transit model --> get t0, depths for single transit
                 p0 = [t0, np.sqrt(depth)]
                 popt, _ = curve_fit(
@@ -886,15 +897,16 @@ class TransitFitter(object):
             TCE_list[i].Z_oddeven = Z
 
             if Z > 5:
-                TCE_list[i].FP = "odd_even"
+                oddeven_fig.suptitle("$Z$ = {:.3f} (FAIL)".format(Z))
+                if TCE_list[i].FP != "No":
+                    TCE_list[i].FP += ", odd_even"
+                else:
+                    TCE_list[i].FP = "odd_even"
                 print("      {}...FAIL.".format(i))
 
             else:
+                oddeven_fig.suptitle("$Z$ = {:.3f} (PASS)".format(Z))
                 print("      {}...PASS.".format(i))
-
-            # format axes
-            if (len(transits_even) > 0) & (len(transits_odd) > 0):
-                oddeven_fig.suptitle("$Z$ = {:.3f}".format(Z))
 
             for ax in axes:
                 ax.axhline(1.0, c='k', ls='--', lw=1, zorder=0)
@@ -930,6 +942,146 @@ class TransitFitter(object):
 
             # save and close figure
             TCE_list[i].tdepths_fig = tdepths_fig
+            plt.close()
+
+        return TCE_list
+
+
+    def _vet_line_test_(self, TCE_list):
+        """Helper function to compare linear fit to transit model fit
+
+        @param TCE_list: list of TCE dictionaries
+        @type TCE_list: list
+
+        @return vetted TCE list
+
+        """
+
+        print("   -> straight line test:")
+
+        for i in range(len(TCE_list)):
+
+            # mask previous transits
+            previous_intransit = np.zeros(len(self.time_raw), dtype=bool)
+            if i > 0:
+                for previous_tce in TCE_list[0:i]:
+                    previous_intransit += transit_mask(self.time_raw, previous_tce.period,
+                                              2.5 * previous_tce.duration,
+                                              previous_tce.T0)
+
+            # Only care about data near transits
+            time, flux, flux_err = self._get_intransit_flux_(TCE_list[i], msk=previous_intransit)
+
+            # grab parameters from fit
+            t0_best = TCE_list[i].fit_results["median"]["$T_0$"]
+            p_best = TCE_list[i].fit_results["median"]["$P$"]
+            a_best = TCE_list[i].fit_results["median"]["$a/R_*$"]
+            b_best = TCE_list[i].fit_results["median"]["$b$"]
+            rp_best = TCE_list[i].fit_results["median"]["$r_p/R_*$"]
+
+            # phase to best period and t0
+            t_fold = (time - t0_best + 0.5 * p_best) % p_best - 0.5 * p_best
+
+            # sort arrays by phase
+            flux = flux[np.argsort(t_fold)]
+            flux_err = flux_err[np.argsort(t_fold)]
+            t_fold = np.sort(t_fold)
+
+            # set up figure for residuals
+            gridspec = dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
+            fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw=gridspec)
+
+            # select first axis for transit model residual plot
+            ax = axes[0]
+            ax.set_ylabel("transit model residuals")
+            ax.set_xlim([t_fold.min() * 24 + 0.75, t_fold.max() * 24 - 0.75])
+
+            # convert to inclination angle
+            inc = np.arccos(b_best / a_best) * (180 / np.pi)
+
+            # batman model
+            params = batman.TransitParams()
+            params.t0 = 0  # time of inferior conjunction
+            params.per = p_best  # orbital period
+            params.rp = rp_best  # planet radius (in units of stellar radii)
+            params.a = a_best  # semi-major axis (in units of stellar radii)
+            params.inc = inc  # orbital inclination (in degrees)
+            params.ecc = 0.  # eccentricity
+            params.w = 90.  # longitude of periastron (in degrees)
+            params.u = [self.u1, self.u2]  # limb darkening coefficients []
+            params.limb_dark = "quadratic"  # limb darkening model
+            model = batman.TransitModel(params, t_fold)  # initializes model
+
+            # flux from batman model
+            flux_m = model.light_curve(params)  # calculates light curve
+
+            # compute residuals and chi2
+            resid_tmodel = flux - flux_m
+            chi2_tmodel = np.sum(resid_tmodel ** 2 / flux_err ** 2) / (len(resid_tmodel) - 5)
+
+            # plot residuals for "best-fit" model
+            ax.errorbar(t_fold * 24, resid_tmodel, yerr=flux_err, fmt='k.', ms=1, alpha=0.1, rasterized=True)  # plot data
+            ax.plot(t_fold * 24, resid_tmodel, 'k.', ms=1, alpha=0.5, rasterized=True)
+
+            # plot binned residuals
+            ax.errorbar(*self._resample_(t_fold * 24, resid_tmodel), fmt='rx', fillstyle="none", elinewidth=1,
+                        zorder=200, label="binned transit model residual")
+
+            # set y limits
+            ax.set_ylim([-5 * np.std(resid_tmodel), 5 * np.std(resid_tmodel)])
+
+            # line at y=0
+            ax.axhline(0.0, color="b", alpha=0.75, label=r"reduced $\chi^2 = {:.3f}$".format(chi2_tmodel))
+            ax.legend()
+
+            # Now fit a straight line to the data
+            linear_func = lambda x, m, b: m * x + b
+            popt, _ = curve_fit(linear_func, t_fold, flux, [0, 1], sigma=flux_err)
+            flux_line = linear_func(t_fold, *popt)
+
+            # compute residuals and chi2
+            resid_line = flux - flux_line
+            chi2_line = np.sum(resid_line**2 / flux_err**2) / (len(resid_line) - 2)
+
+            # select second axis for straight line residual plot
+            ax = axes[1]
+            ax.set_ylabel("straight line residuals")
+            ax.set_xlabel("phase (hrs)")
+
+            # plot residuals for "best-fit" model
+            ax.errorbar(t_fold * 24, resid_line, yerr=flux_err, fmt='k.', ms=1, alpha=0.1,
+                        rasterized=True)  # plot data
+            ax.plot(t_fold * 24, resid_line, 'k.', ms=1, alpha=0.5, rasterized=True)
+
+            # plot binned residuals
+            ax.errorbar(*self._resample_(t_fold * 24, resid_line), fmt='rx', fillstyle="none", elinewidth=1,
+                        zorder=200, label="binned straight line residual")
+
+            # set y limits
+            ax.set_ylim([-5 * np.std(resid_line), 5 * np.std(resid_line)])
+
+            # line at y=0
+            ax.axhline(0.0, color="b", alpha=0.75, label=r"reduced $\chi^2 = {:.3f}$".format(chi2_line))
+            ax.legend()
+
+            # test discrepancy significance
+            Z = chi2_line - chi2_tmodel
+            TCE_list[i].Z_straightline = Z
+
+            if Z < 0:
+                fig.suptitle("$Z$ = {:.3f} (FAIL)".format(Z))
+                if TCE_list[i].FP != "No":
+                    TCE_list[i].FP += ", straight_line"
+                else:
+                    TCE_list[i].FP = "straight_line"
+                print("      {}...FAIL.".format(i))
+
+            else:
+                fig.suptitle("$Z$ = {:.3f} (PASS)".format(Z))
+                print("      {}...PASS.".format(i))
+
+            # save figure to TCE object
+            TCE_list[i].line_test_fig = fig
             plt.close()
 
         return TCE_list
@@ -976,6 +1128,12 @@ class TransitFitter(object):
 
                 transit_msk = (time > t0 - 3 * duration) & (time < t0 + 3 * duration)
 
+                # skip if there are fewer than 70% of data points
+                cadence = 2. / 1440   # 2-min cadence
+                N_min = 0.7 * (6 * duration / cadence)
+                if np.sum(transit_msk) < N_min:
+                    continue
+
                 # Fit transit model --> get t0, depths for single transit
                 p0 = [t0, np.sqrt(depth)]
                 popt, pcov = curve_fit(
@@ -1017,7 +1175,7 @@ class TransitFitter(object):
             # plot residuals
             ax = axes[1]
             ax.set_xlabel("transit number")
-            ax.set_ylabel("residuals (d)")
+            ax.set_ylabel("O - C (d)")
             ax.axhline(0.0, c='b', ls='--', lw=1, zorder=0)
             ax.errorbar(np.array(transit_number_list), np.array(t0_list) - y_fit,
                         yerr=np.array(t0_uncert_list), fmt='k.', ms=12)
