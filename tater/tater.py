@@ -1024,7 +1024,7 @@ class TransitFitter(object):
             ax.plot(t_fold * 24, resid_tmodel, 'k.', ms=1, alpha=0.5, rasterized=True)
 
             # plot binned residuals
-            ax.errorbar(*self._resample_(t_fold * 24, resid_tmodel), fmt='rx', fillstyle="none", elinewidth=1,
+            ax.errorbar(*self._resample_(t_fold * 24, resid_tmodel), fmt='r.', fillstyle="none", elinewidth=1,
                         zorder=200, label="binned transit model residual")
 
             # set y limits
@@ -1054,7 +1054,7 @@ class TransitFitter(object):
             ax.plot(t_fold * 24, resid_line, 'k.', ms=1, alpha=0.5, rasterized=True)
 
             # plot binned residuals
-            ax.errorbar(*self._resample_(t_fold * 24, resid_line), fmt='rx', fillstyle="none", elinewidth=1,
+            ax.errorbar(*self._resample_(t_fold * 24, resid_line), fmt='r.', fillstyle="none", elinewidth=1,
                         zorder=200, label="binned straight line residual")
 
             # set y limits
@@ -1662,7 +1662,7 @@ class TransitFitter(object):
         return walker_fig, corner_fig
 
 
-    def _resample_(self, x, y, nbins=30):
+    def _resample_(self, x, y, nbins=60):
         """Helper function to resample (bin) light curve for better display
 
         @param x: time
@@ -1681,13 +1681,16 @@ class TransitFitter(object):
         # get bin standard deviations for y-uncertainty
         bin_stds, _, _ = binned_statistic(x, y, statistic='std', bins=nbins)
 
+        # count data points in each bin
+        bin_counts, _, _ = binned_statistic(x, y, statistic='count', bins=nbins)
+
         # get bin widths for x-uncertainty
         bin_width = (bin_edges[1] - bin_edges[0])
 
         # get bin centers
         bin_centers = bin_edges[1:] - bin_width / 2
 
-        return bin_centers, bin_means, bin_stds, bin_width / 2
+        return bin_centers, bin_means, bin_stds / np.sqrt(bin_counts), bin_width / 2
 
 
     def _plot_best_fit_(self, t, f, f_err, flat_samples, show_plot=False):
@@ -1737,7 +1740,7 @@ class TransitFitter(object):
         ax.plot(t_fold * 24, f, 'k.', ms=1, alpha=0.5, rasterized=True)
 
         # plot binned data
-        ax.errorbar(*self._resample_(t_fold * 24, f), fmt='rx', fillstyle="none", elinewidth=1, zorder=200)
+        ax.errorbar(*self._resample_(t_fold * 24, f), fmt='r.', fillstyle="none", elinewidth=1, zorder=200)
 
         # choose 100 random draws from MCMC to plot
         inds = np.random.randint(len(flat_samples), size=100)
@@ -1768,7 +1771,7 @@ class TransitFitter(object):
             flux_model = model.light_curve(params)  # calculates light curve
 
             # plot model
-            ax.plot(t_fold * 24, flux_model, 'b-', lw=1, alpha=0.5)
+            ax.plot(t_fold * 24, flux_model, 'b-', lw=1, alpha=0.2)
 
         # select second axis for residual plot
         ax = axes[1]
@@ -1797,10 +1800,10 @@ class TransitFitter(object):
 
         # plot residuals for median "best-fit" model
         ax.errorbar(t_fold * 24, f - flux_m, yerr=f_err, fmt='k.', ms=1, alpha=0.1, rasterized=True)  # plot data
-        ax.plot(t_fold * 24, f - flux_m, 'k.', ms=1, alpha=0.5, rasterized=True)
+        ax.plot(t_fold * 24, f - flux_m, 'k.', ms=1, alpha=0.4, rasterized=True)
 
         # plot binned residuals
-        ax.errorbar(*self._resample_(t_fold * 24, f - flux_m), fmt='rx', fillstyle="none", elinewidth=1, zorder=200)
+        ax.errorbar(*self._resample_(t_fold * 24, f - flux_m), fmt='r.', fillstyle="none", elinewidth=1, zorder=200)
 
         # line at y=0
         ax.axhline(0.0, color="b", alpha=0.75)
