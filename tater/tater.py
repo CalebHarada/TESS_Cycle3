@@ -1991,8 +1991,14 @@ class TransitFitter(object):
         return None
 
 
-    def inject(t0, per, rp, a, inc, baseline=1., q1=None, q2=None):
+    def inject(time, flux, t0, per, rp, a, inc, baseline=1., q1=None, q2=None):
         """Helper function to generate a single batman transit model
+
+        @param time: time array
+        @type time: numpy array
+
+        @param flux: flux array
+        @type flux: numpy array
 
         @param t0: time of first transit
         @type t0: float
@@ -2021,16 +2027,25 @@ class TransitFitter(object):
         @return: initialized light curve with injected planet signal
         """
 
-        lc = _model_single_transit_(self, t, t0, per, rp, a, 
+        lc = self._model_single_transit_(time, t0, per, rp, a, 
             inc=inc, baseline=baseline, q1=q1, q2=q2)
-        return np.array(self.f * lc)
+        return np.array(flux * lc)
 
 
-    def recover(period, t0, t0_tolerance = 0.01,
+    def recover(time, flux, flux_err, period, t0, t0_tolerance = 0.01,
         max_iterations=7, tce_threshold=8.0, show_plots=False,
-        time=None, flux=None, flux_err=None):
+        raw_flux=True, window_size=3.0):
 
         """Function to recover signals from light curve
+
+        @param time: time array
+        @type time: numpy array
+
+        @param flux: flux array
+        @type flux: numpy array
+
+        @param flux_err: flux uncertainty array
+        @type flux_err: numpy array
 
         @param period: orbital period of signal to recover (units of days)
         @type period: float
@@ -2050,17 +2065,28 @@ class TransitFitter(object):
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
 
-        @param time: time array
-        @type time: numpy array (optional; default=None)
+        @param raw_flux: bool for whether flux is raw (and therefore should be flattened)
+        @type raw_flux: bool (optional; default=True)
 
-        @param flux: flux array
-        @type flux: numpy array (optional; default=None)
-
-        @param flux_err: flux uncertainty array
-        @type flux_err: numpy array (optional; default=None)
+        @param window_size: median smoothing filter window size in days (only used if raw_flux == True)
+        @type window_size: float (optional; default=3.0)
 
         @return: recovery success (bool)
         """
+
+        # flatten light curve if input is not already flattened
+        if raw_flux:
+            flux_err = flux_err / flux
+            # flatten flux with running median filter (Wotan package)
+            flux = flatten(
+                time,                                   # Array of time values
+                flux,                                   # Array of flux values
+                method='median',                        # median filter
+                window_length=window_size,              # The length of the filter window in units of ``time``
+                edge_cutoff=0.5,                        # length (in units of time) to be cut off each edge.
+                break_tolerance=0.5,                    # Split into segments at breaks longer than that
+                return_trend=False                      # Return trend and flattened light curve
+                )
 
         TCEs = find_planets(time=time, flux=flux, flux_err=flux_err,
             max_iterations=max_iterations, tce_threshold=tce_threshold, 
@@ -2079,7 +2105,7 @@ class TransitFitter(object):
         return recovery
 
 
-    def explore(mstar, rstar, time=None, flux=None, flux_err=None,
+    def explore(time, flux, flux_err, mstar, rstar,
         baseline_min=1, baseline_max=1, baselines=None,
         q1_min=0.25, q1_max=0.25, q1s=None,
         q2_min=0.25, q2_max=0.25, q2s=None,
@@ -2087,16 +2113,22 @@ class TransitFitter(object):
         period_min=0.5, period_max=200, periods=None,
         radius_min=0.5, radius_max=4, radii=None,
         b_min=0, b_max=1, bs=None,
-        N=25,seed=None):
+        N=25, seed=None, t0_tolerance = 0.01,
+        max_iterations=7, tce_threshold=8.0, show_plots=False,
+        raw_flux=True, window_size=3.0):
         """Function to explore multiple injections & recoveries
 
-        @param mstar: stellar mass (units of solar masses)
-        @type mstar: float
+        @param time: time array
+        @type time: numpy array
 
+        @param flux: flux array
+        @type flux: numpy array
+
+        @param flux_err: flux uncertainty array
+        @type flux_err: numpy array
+
+        mstar: stellar mass (Solar mass)
         rstar: stellar radius (Solar radii)
-        time: input time array
-        flux: input flux array
-        flux_err: input flux uncertainties array
         baseline_min: flux baseline minimum
         baseline_max: flux baseline maximum
         baselines: flux array (overrides baseline_min and baseline_max)
@@ -2120,6 +2152,24 @@ class TransitFitter(object):
         bs: impact parameter array (overrides b_min and b_max)
         N: number of sample draws to run and return
         seed: random seed input to gaurantee repeatability
+
+        @param t0_tolerance: required fractional t0 agreement of signal
+        @type t0_tolerance: float
+
+        @param max_iterations: maximum number of search iterations if SDE threshold is never reached
+        @type max_iterations: int (optional; default=7)
+
+        @param tce_threshold: Minimum Signal Detection Efficiency (SDE) that counts as a Threshold Crossing Event (TCE)
+        @type tce_threshold: float (optional; default=8.0)
+
+        @param show_plots: show plots of periodogram and best TLS model
+        @type show_plots: bool (optional; default=False)
+
+        @param raw_flux: bool for whether flux is raw (and therefore should be flattened)
+        @type raw_flux: bool (optional; default=True)
+
+        @param window_size: median smoothing filter window size in days (only used if raw_flux == True)
+        @type window_size: float (optional; default=3.0)
         """
 
         # random seed initialization
@@ -2197,7 +2247,9 @@ class TransitFitter(object):
         # helper function to map onto in order to perform injection/recovery
         def helper(theta):
             baseline,q1,q2,t0,per,rp,ars,inc = theta
-            return recover(per, t0, time=time, flux=inject(theta, time, flux),
-                flux_err=flux_err)
+            flux = inject(time, flux, t0, per, rp, a, inc, baseline, q1, q2))
+            return recover(time, flux, flux_err, per, t0, 
+                t0_tolerance, max_iterations, tce_threshold, show_plots,
+                raw_flux, window_size)
         results = list(map(helper,thetas))
         return thetas,results
