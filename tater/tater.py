@@ -137,6 +137,12 @@ class TransitFitter(object):
         # download SPOC data from all sectors at 120s exp time
         print("   acquiring TESS data...")
         search_result = search_lightcurve(self.tic_id, mission="TESS", author="SPOC", exptime=120)
+        # in rare cases (e.g. TIC 96246348), the wrong targets are included in search output
+        if sum(search_result.target_name.data != self.tic_id[len('TIC '):]) > 0:
+                print("Additional targets found by lightkurve")
+                print(search_result)
+                print("Removing additional targets")
+                search_result = search_result[np.where(search_result.target_name.data == self.tic_id[len('TIC '):])]
         self.lc = search_result.download_all(quality_bitmask="default")
         self.time_raw, self.f_raw, self.ferr_raw = np.concatenate([(sector.remove_nans().time.value,
                                                                     sector.remove_nans().flux.value,
@@ -360,8 +366,10 @@ class TransitFitter(object):
             pdf.savefig(planet_dict.ttv_fig)
             pdf.savefig(planet_dict.mcmc_fig)
             pdf.savefig(planet_dict.corner_fig)
-            pdf.savefig(planet_dict.result_fig)
-            pdf.savefig(planet_dict.result_full_fig)
+            if planet_dict.result_fig is not None:
+                pdf.savefig(planet_dict.result_fig)
+            if planet_dict.result_full_fig is not None:
+                pdf.savefig(planet_dict.result_full_fig)
 
             # make a table with the fit results and save it to the PDF
             table_fig, _ = self._render_mpl_table_(planet_dict.fit_results)
@@ -825,10 +833,12 @@ class TransitFitter(object):
         ax.set_title("TTV check")
         ax.set_ylabel("transit center (d)")
         ax.plot(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even), "kx", ms=12)
-        slope, intercept, _, _, _ = linregress(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even))
-        y_fit = linear_func(np.sort(transits_odd + transits_even), slope, intercept)
-        ax.plot(np.sort(transits_odd + transits_even), y_fit, 'b-')
-        ax.text(0, np.sort(t0_odd + t0_even)[-1],
+        # only fit and plot regression line if at least two transits
+        if (len(transits_even + transits_odd) > 1):
+            slope, intercept, _, _, _ = linregress(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even))
+            y_fit = linear_func(np.sort(transits_odd + transits_even), slope, intercept)
+            ax.plot(np.sort(transits_odd + transits_even), y_fit, 'b-')
+            ax.text(0, np.sort(t0_odd + t0_even)[-1],
                 " $P$ = {:.5f} d \n $T_0$ = {:.5f} d \n $y = Px + T_0$".format(slope, intercept))
 
         # plot residuals
@@ -836,7 +846,9 @@ class TransitFitter(object):
         ax.set_xlabel("transit number")
         ax.set_ylabel("residuals (d)")
         ax.axhline(0.0, c='b', ls='--', lw=1, zorder=0)
-        ax.plot(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even) - y_fit, "kx", ms=12)
+        # only fit and plot regression line residuals if at least two transits
+        if (len(transits_even + transits_odd) > 1):
+            ax.plot(np.sort(transits_odd + transits_even), np.sort(t0_odd + t0_even) - y_fit, "kx", ms=12)
 
         # save and close figure
         tce_dict.ttv_fig = ttv_fig
@@ -1246,10 +1258,16 @@ class TransitFitter(object):
         # generate plots (option to display plots)
         if show_plots:
             walker_fig, corner_fig = self._plot_mcmc_diagnostics_(samples, flat_samples, show_plot=True)
-            best_fig, best_full_fig = self._plot_best_fit_(t, f, f_err, flat_samples, show_plot=True)
+            if len(t) > 0:
+                best_fig, best_full_fig = self._plot_best_fit_(t, f, f_err, flat_samples, show_plot=True)
+            else:
+                best_fig, best_full_fig = None, None
         else:
             walker_fig, corner_fig = self._plot_mcmc_diagnostics_(samples, flat_samples)
-            best_fig, best_full_fig = self._plot_best_fit_(t, f, f_err, flat_samples)
+            if len(t) > 0:
+                best_fig, best_full_fig = self._plot_best_fit_(t, f, f_err, flat_samples)
+            else:
+                best_fig, best_full_fig = None, None
 
         # pack up fit results in a DataFrame
         results_dict = dict(zip(["median", "lower", "upper"], np.quantile(flat_samples, [0.5, 0.16, 0.84], axis=0)))
