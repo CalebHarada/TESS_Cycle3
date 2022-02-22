@@ -352,8 +352,11 @@ class TransitFitter(object):
         print("   VETTING COMPLETE.")
 
         # save summary figure of vetted candidates
-        if save_results & (self.planet_candidates.append(TCE) != None):
-            self._save_results_image_()
+        """
+        if save_results & (len(self.planet_candidates) > 0):
+            # self._save_results_image_()
+            self._save_system_overview_()
+        """
 
         print(" ")
         print("   TATER DONE.")
@@ -579,7 +582,7 @@ class TransitFitter(object):
             ax1.set_xlim([tls_results.periods.min(), tls_results.periods.max()])
             ax1.set_xlabel("period (days)")
             ax1.set_ylabel("power")
-            ax1.set_title("Peak at {:.6f} days".format(tls_results.period))
+            ax1.set_title("Peak at {:.4f} days (SDE = {:.4f})".format(tls_results.period, tls_results.SDE))
 
             # label TCE threshold, best period
             ax1.axhline(tce_threshold, ls="--", c="r", alpha=0.6)
@@ -901,20 +904,26 @@ class TransitFitter(object):
                             fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
 
             # test discrepancy significance
-            Z = abs(mean_depth_even - mean_depth_odd) / np.sqrt(std_depth_even ** 2 + std_depth_odd ** 2)
-            TCE_list[i].Z_oddeven = Z
+            if (len(transits_odd) > 0) & (len(transits_even) > 0):
 
-            if Z > 5:
-                oddeven_fig.suptitle("$Z$ = {:.3f} (FAIL)".format(Z))
-                if TCE_list[i].FP != "No":
-                    TCE_list[i].FP += ", odd_even"
+                Z = abs(mean_depth_even - mean_depth_odd) / np.sqrt(std_depth_even ** 2 + std_depth_odd ** 2)
+                TCE_list[i].Z_oddeven = Z
+
+                if Z > 5:
+                    oddeven_fig.suptitle("$Z$ = {:.3f} (FAIL)".format(Z))
+                    if TCE_list[i].FP != "No":
+                        TCE_list[i].FP += ", odd_even"
+                    else:
+                        TCE_list[i].FP = "odd_even"
+                    print("      {}...FAIL.".format(i))
+
                 else:
-                    TCE_list[i].FP = "odd_even"
-                print("      {}...FAIL.".format(i))
+                    oddeven_fig.suptitle("$Z$ = {:.3f} (PASS)".format(Z))
+                    print("      {}...PASS.".format(i))
 
             else:
-                oddeven_fig.suptitle("$Z$ = {:.3f} (PASS)".format(Z))
-                print("      {}...PASS.".format(i))
+                TCE_list[i].Z_oddeven = np.nan
+                print("      Insufficient transits for odd/even test.")
 
             for ax in axes:
                 ax.axhline(1.0, c='k', ls='--', lw=1, zorder=0)
@@ -1752,6 +1761,9 @@ class TransitFitter(object):
         # select first axis
         ax = axes[0]
         ax.set_ylabel("relative flux")
+        ax.set_title("P = {:.3f} days;    T0 = {:.3f};    rp_rs = {:.3f};    a_rs = {:.3f}".format(
+            p_best, t0_best, rp_best, a_best)
+        )
 
         # plot folded light curve and model
         ax.errorbar(t_fold * 24, f, yerr=f_err, fmt='k.', ms=1, alpha=0.1, rasterized=True)  # plot data
@@ -1881,6 +1893,42 @@ class TransitFitter(object):
 
         return ax.get_figure(), ax
 
+    """
+    def _save_system_overview_(self):
+        # Helper function to save system overview plots
+
+
+        # get number of candidates
+        N_candidates = len(self.planet_candidates)
+
+        # save directory
+        tic_no = self.tic_id[4:]
+        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        if not os.path.isdir(save_to_path):
+            os.mkdir(save_to_path)
+
+        # set up figure
+        fig, axes = plt.subplots(1 + N_candidates, 2)
+
+        # 1) T0 vs period plot
+        ax = axes[0, 0]
+        ax.set_xlabel("Period (days)")
+        ax.set_ylabel("T0")
+
+        for i in range(N_candidates):
+
+            period = self.planet_candidates[i].fit_results["median"]["$P$"]
+            t0 = self.planet_candidates[i].fit_results["median"]["$T_0$"]
+
+            ax.plot(period, t0, "o")
+
+
+
+
+        # save figure
+        fig.savefig("{}/{}_system_overview.pdf".format(save_to_path, tic_no))
+        plt.close()
+    """
 
 
     def _save_results_image_(self):
