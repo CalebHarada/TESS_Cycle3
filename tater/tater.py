@@ -896,20 +896,26 @@ class TransitFitter(object):
                             fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
 
             # test discrepancy significance
-            Z = abs(mean_depth_even - mean_depth_odd) / np.sqrt(std_depth_even ** 2 + std_depth_odd ** 2)
-            TCE_list[i].Z_oddeven = Z
+            if (len(transits_odd) > 0) & (len(transits_even) > 0):
 
-            if Z > 5:
-                oddeven_fig.suptitle("$Z$ = {:.3f} (FAIL)".format(Z))
-                if TCE_list[i].FP != "No":
-                    TCE_list[i].FP += ", odd_even"
+                Z = abs(mean_depth_even - mean_depth_odd) / np.sqrt(std_depth_even ** 2 + std_depth_odd ** 2)
+                TCE_list[i].Z_oddeven = Z
+
+                if Z > 5:
+                    oddeven_fig.suptitle("$Z$ = {:.3f} (FAIL)".format(Z))
+                    if TCE_list[i].FP != "No":
+                        TCE_list[i].FP += ", odd_even"
+                    else:
+                        TCE_list[i].FP = "odd_even"
+                    print("      {}...FAIL.".format(i))
+
                 else:
-                    TCE_list[i].FP = "odd_even"
-                print("      {}...FAIL.".format(i))
+                    oddeven_fig.suptitle("$Z$ = {:.3f} (PASS)".format(Z))
+                    print("      {}...PASS.".format(i))
 
             else:
-                oddeven_fig.suptitle("$Z$ = {:.3f} (PASS)".format(Z))
-                print("      {}...PASS.".format(i))
+                TCE_list[i].Z_oddeven = np.nan
+                print("      Insufficient transits for odd/even test.")
 
             for ax in axes:
                 ax.axhline(1.0, c='k', ls='--', lw=1, zorder=0)
