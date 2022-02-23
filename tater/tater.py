@@ -276,6 +276,13 @@ class TransitFitter(object):
             # the data in and around the transits.
             time, flux, flux_err = self._get_intransit_flux_(TCE, msk=intransit)
 
+            # Need at least one transit of data to do MCMC
+            cadence = 2. / 1440  # 2-min cadence
+            if not len(time) >= TCE.duration / cadence:
+                TCE.FP = "Insufficient data"
+                print("    Insufficient in-transit data to execute MCMC. Continuing... \n")
+                continue
+
             # run the MCMC (option to show plots)
             if show_plots:
                 planet_fit, walker_fig, corner_fig, best_fig, best_full_fig = self._execute_mcmc_(
@@ -338,7 +345,7 @@ class TransitFitter(object):
         for i, TCE in enumerate(self.TCEs):
             if TCE.FP == "No":
                 self.planet_candidates.append(TCE)
-            if save_results:
+            if save_results & (TCE.FP != "Insufficient data"):
                 self._save_vetting_pdf_(TCE, i)
 
         print("   Vetting recovered {} planet candidate(s) from {} TCE(s).".format(len(self.planet_candidates),
@@ -465,7 +472,7 @@ class TransitFitter(object):
             else:
                 text_file.write("FAIL.\n")
             text_file.write("FP : {} \n".format(planet_dict.FP))
-            text_file.write("Z_straightline : {} (>0?) \n".format(planet_dict.Z_straightline))
+            text_file.write("Delta_chi2_straightline : {} (>30.863?) \n".format(planet_dict.delta_chi2))
             text_file.write("Z_oddeven : {} (<5?) \n".format(planet_dict.Z_oddeven))
 
 
@@ -716,7 +723,14 @@ class TransitFitter(object):
         print("   -> previous planet check:")
 
         for i in range(len(TCE_list)):
+
+            if TCE_list[i].FP == "Insufficient data":
+                continue
+
             for j in range(0, i):
+
+                if TCE_list[j].FP == "Insufficient data":
+                    continue
 
                 P_A, P_B = np.sort((TCE_list[i].fit_results["median"]["$P$"],
                                     TCE_list[j].fit_results["median"]["$P$"]))
@@ -768,6 +782,9 @@ class TransitFitter(object):
         print("   -> odd vs even transit test:")
 
         for i in range(len(TCE_list)):
+
+            if TCE_list[i].FP == "Insufficient data":
+                continue
 
             # mask previous transits
             previous_intransit = np.zeros(len(self.time_raw), dtype=bool)
@@ -970,6 +987,9 @@ class TransitFitter(object):
 
         for i in range(len(TCE_list)):
 
+            if TCE_list[i].FP == "Insufficient data":
+                continue
+
             # mask previous transits
             previous_intransit = np.zeros(len(self.time_raw), dtype=bool)
             if i > 0:
@@ -1026,7 +1046,7 @@ class TransitFitter(object):
 
             # compute residuals and chi2
             resid_tmodel = flux - flux_m
-            chi2_tmodel = np.sum(resid_tmodel ** 2 / flux_err ** 2) / (len(resid_tmodel) - 5)
+            chi2_tmodel = np.sum(resid_tmodel ** 2 / flux_err ** 2)
 
             # plot residuals for "best-fit" model
             ax.errorbar(t_fold * 24, resid_tmodel, yerr=flux_err, fmt='k.', ms=1, alpha=0.1, rasterized=True)  # plot data
@@ -1040,7 +1060,7 @@ class TransitFitter(object):
             ax.set_ylim([-5 * np.std(resid_tmodel), 5 * np.std(resid_tmodel)])
 
             # line at y=0
-            ax.axhline(0.0, color="b", alpha=0.75, label=r"reduced $\chi^2 = {:.3f}$".format(chi2_tmodel))
+            ax.axhline(0.0, color="b", alpha=0.75, label=r"$\chi^2 = {:.3f}$".format(chi2_tmodel))
             ax.legend()
 
             # Now fit a straight line to the data
@@ -1050,7 +1070,7 @@ class TransitFitter(object):
 
             # compute residuals and chi2
             resid_line = flux - flux_line
-            chi2_line = np.sum(resid_line**2 / flux_err**2) / (len(resid_line) - 2)
+            chi2_line = np.sum(resid_line**2 / flux_err**2)
 
             # select second axis for straight line residual plot
             ax = axes[1]
@@ -1070,15 +1090,15 @@ class TransitFitter(object):
             ax.set_ylim([-5 * np.std(resid_line), 5 * np.std(resid_line)])
 
             # line at y=0
-            ax.axhline(0.0, color="b", alpha=0.75, label=r"reduced $\chi^2 = {:.3f}$".format(chi2_line))
+            ax.axhline(0.0, color="b", alpha=0.75, label=r"$\chi^2 = {:.3f}$".format(chi2_line))
             ax.legend()
 
             # test discrepancy significance
-            Z = chi2_line - chi2_tmodel
-            TCE_list[i].Z_straightline = Z
+            delta_chi2 = chi2_line - chi2_tmodel
+            TCE_list[i].delta_chi2 = delta_chi2
 
-            if Z < 0:
-                fig.suptitle("$Z$ = {:.3f} (FAIL)".format(Z))
+            if delta_chi2 < 30.863:
+                fig.suptitle(r"$\Delta \chi^2$ = {:.3f} (FAIL)".format(delta_chi2))
                 if TCE_list[i].FP != "No":
                     TCE_list[i].FP += ", straight_line"
                 else:
@@ -1086,7 +1106,7 @@ class TransitFitter(object):
                 print("      {}...FAIL.".format(i))
 
             else:
-                fig.suptitle("$Z$ = {:.3f} (PASS)".format(Z))
+                fig.suptitle(r"$\Delta \chi^2$ = {:.3f} (PASS)".format(delta_chi2))
                 print("      {}...PASS.".format(i))
 
             # save figure to TCE object
@@ -1109,6 +1129,9 @@ class TransitFitter(object):
         print("   -> saving transit times")
 
         for i in range(len(TCE_list)):
+
+            if TCE_list[i].FP == "Insufficient data":
+                continue
 
             # mask previous transits
             previous_intransit = np.zeros(len(self.time_raw), dtype=bool)
