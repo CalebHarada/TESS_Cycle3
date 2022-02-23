@@ -424,9 +424,20 @@ class TransitFitter(object):
 
         # save summary of fit results to a txt file (also in LaTeX format!)
         with open("{}/tater_report_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1), "w") as text_file:
-            text_file.write("{}\n \n".format(self.tic_id))
+
+            text_file.write("{}\n".format(self.tic_id))
+            text_file.write("TCE: {}\n \n".format(planet_ind + 1))
+
+            # save star params
+            text_file.write("------------------------------\n")
+            for key in self.star_info:
+                text_file.write("{} : {} \n".format(key, self.star_info[key]))
+            text_file.write("------------------------------\n \n")
+
+            # save planet params
             for key in planet_dict.keys():
                 text_file.write("{} : {} \n".format(key, planet_dict[key]))
+
             text_file.write("\n LaTeX table : \n")
             text_file.write(planet_dict.fit_results.to_latex())
 
@@ -473,12 +484,15 @@ class TransitFitter(object):
 
         # save summary of fit results to a txt file
         with open("{}/tater_vet_{}_0{}.txt".format(save_to_path, tic_no, planet_ind + 1), "w") as text_file:
-            text_file.write("{}\n \n".format(self.tic_id))
-            text_file.write("Period : {} \n".format(planet_dict.period))
+            text_file.write("{}\n".format(self.tic_id))
+            text_file.write("TCE: {}\n".format(planet_ind + 1))
             if planet_dict.FP == "No":
-                text_file.write("PASS.\n \n")
+                text_file.write("vet: PASS.\n \n")
             else:
-                text_file.write("FAIL.\n")
+                text_file.write("vet: FAIL.\n \n")
+
+            text_file.write("Period : {} \n \n".format(planet_dict.period))
+
             text_file.write("FP : {} \n".format(planet_dict.FP))
             text_file.write("Delta_chi2_straightline : {} (>30.863?) \n".format(planet_dict.delta_chi2))
             text_file.write("Z_oddeven : {} (<5?) \n".format(planet_dict.Z_oddeven))
@@ -1384,14 +1398,14 @@ class TransitFitter(object):
         self.u1, self.u2 = ld_interpolator(self.logg, self.Teff, self.Fe_H)
 
         # print stellar info
-        star_info = dict(zip(
+        self.star_info = dict(zip(
             ["TIC ID", "R_star", "M_star", "logg", "Teff", "[Fe/H]", "u1", "u2"],
             [self.tic_id, self.R_star, self.M_star, self.logg, self.Teff, self.Fe_H, self.u1, self.u2]
         )
         )
 
         print("------------------------------")
-        for i in star_info: print("   {}:\t{}".format(i, star_info[i]))
+        for key in self.star_info: print("   {}:\t{}".format(key, self.star_info[key]))
         print("------------------------------")
 
         tic_no = self.tic_id[4:]
