@@ -2332,9 +2332,9 @@ class TransitFitter(object):
         # helper function to map onto in order to perform injection/recovery
         def helper(theta):
             baseline,q1,q2,t0,per,rp,ars,inc = theta
-            flux = inject(time, flux, t0, per, rp, a, inc, baseline, q1, q2))
+            flux = inject(time, flux, t0, per, rp, a, inc, baseline, q1, q2)
             return recover(time, flux, flux_err, per, t0, 
                 t0_tolerance, max_iterations, tce_threshold, show_plots,
                 raw_flux, window_size)
         results = list(map(helper,thetas))
-        return thetas,results
+        return thetas, results
