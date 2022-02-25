@@ -245,6 +245,13 @@ class TransitFitter(object):
 
         """
 
+        print("    Running initial injection/recovery...")
+        test_inject = self._inject_(self.time, self.f, self.time[0]+4.2, 4.2, 0.09, 7.0, 90.)
+        test_recover = self._recover_(self.time, test_inject, self.f_err, self.time[0]+4.2, 4.2)
+        print("    Initial injection/recovery done.\n")
+
+        print(test_recover)
+
         TCEs = self._tls_search_(max_iterations, tce_threshold, 
                                  time=time, flux=flux, flux_err=flux_err,
                                  period_min=period_min, period_max=period_max, 
@@ -252,6 +259,8 @@ class TransitFitter(object):
             else self._tls_search_(max_iterations, tce_threshold,
                                    time=time, flux=flux, flux_err=flux_err,
                                    period_min=period_min, period_max=period_max)
+
+        self.TCEs = TCEs
 
         # check whether any planets were found
         if not len(TCEs) >= 1:
@@ -555,6 +564,9 @@ class TransitFitter(object):
         # initialize in-transit mask
         intransit = np.zeros(len(time), dtype="bool")
 
+        # TCE list
+        TCEs = []
+
         # do the TLS search. stop searching after at most max_iterations
         for i in range(max_iterations):
 
@@ -661,9 +673,9 @@ class TransitFitter(object):
             # self._generate_vet_figures_(tls_results)
 
             # append tls_results to TCE list
-            self.TCEs.append(tls_results)
+            TCEs.append(tls_results)
 
-        return self.TCEs
+        return TCEs
 
 
     def _get_intransit_flux_(self, tce_dict, msk=[]):
@@ -2076,7 +2088,7 @@ class TransitFitter(object):
         return None
 
 
-    def inject(time, flux, t0, per, rp, a, inc, baseline=1., q1=None, q2=None):
+    def _inject_(self, time, flux, t0, per, rp, a, inc, baseline=1., q1=None, q2=None):
         """Helper function to generate a single batman transit model
 
         @param time: time array
@@ -2114,10 +2126,11 @@ class TransitFitter(object):
 
         lc = self._model_single_transit_(time, t0, per, rp, a, 
             inc=inc, baseline=baseline, q1=q1, q2=q2)
+
         return np.array(flux * lc)
 
 
-    def recover(time, flux, flux_err, period, t0, t0_tolerance = 0.01,
+    def _recover_(self, time, flux, flux_err, t0, period, t0_tolerance = 0.01,
         max_iterations=7, tce_threshold=8.0, show_plots=False,
         raw_flux=True, window_size=3.0):
 
@@ -2173,18 +2186,24 @@ class TransitFitter(object):
                 return_trend=False                      # Return trend and flattened light curve
                 )
 
-        TCEs = find_planets(time=time, flux=flux, flux_err=flux_err,
-            max_iterations=max_iterations, tce_threshold=tce_threshold, 
-            show_plots=show_plots)
+        # run TLS search
+        TCEs = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, time=time, flux=flux,
+                                 flux_err=flux_err, show_plots=show_plots)
+
+        # see if injected signal is recovered
         recovery = False
         for TCE in TCEs:
-            if abs(TCE.period - period)/TCE.period_uncertainty > 5:
+            if abs(TCE.period - period) / TCE.period_uncertainty > 5:
                 continue
-            if abs(TCE.T0 - t0)/min(TCE.T0,t0) > t0_tolerance:
+
+            if abs(TCE.T0 - t0) / min(TCE.T0, t0) > t0_tolerance:
                 continue
-            if TCE.SDE > tce_threshold:
+
+            if TCE.SDE < tce_threshold:
                 continue
+
             recovery = True
+
             break
 
         return recovery
