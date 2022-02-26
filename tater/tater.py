@@ -245,12 +245,14 @@ class TransitFitter(object):
 
         """
 
+        """
         print("    Running initial injection/recovery...")
         test_inject = self._inject_(self.time, self.f, self.time[0]+4.2, 4.2, 0.09, 7.0, 90.)
         test_recover = self._recover_(self.time, test_inject, self.f_err, self.time[0]+4.2, 4.2)
         print("    Initial injection/recovery done.\n")
 
         print(test_recover)
+        """
 
         TCEs = self._tls_search_(max_iterations, tce_threshold, 
                                  time=time, flux=flux, flux_err=flux_err,
@@ -264,7 +266,7 @@ class TransitFitter(object):
 
         # check whether any planets were found
         if not len(TCEs) >= 1:
-            raise ValueError("No planet candidates were found.")
+            raise ValueError("No TCEs were found.")
 
         # do MCMC fit for each planet in candidate list
         for i, TCE in enumerate(TCEs):
@@ -349,10 +351,7 @@ class TransitFitter(object):
         # odd even test
         self.TCEs = self._vet_odd_even_(self.TCEs)
 
-        # other vetting functions here:
-        # ............
-        # ............
-        # ............
+        # other vetting functions here?
         # ............
         # ............
 
@@ -606,7 +605,7 @@ class TransitFitter(object):
                 print(f"   Transit search iteration {i} done.")
                 print(" ")
 
-            # don't trust the TLS duration! (different cadences can mess this up)
+            # don't trust the TLS duration! (different cadences/data gaps can mess this up)
             # instead, estimate from period and stellar density
             tls_results.duration = self._estimate_duration_(tls_results.period)
 
