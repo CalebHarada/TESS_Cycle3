@@ -245,14 +245,21 @@ class TransitFitter(object):
 
         """
 
-        """
-        print("    Running initial injection/recovery...")
-        test_inject = self._inject_(self.time, self.f, self.time[0]+4.2, 4.2, 0.09, 7.0, 90.)
-        test_recover = self._recover_(self.time, test_inject, self.f_err, self.time[0]+4.2, 4.2)
-        print("    Initial injection/recovery done.\n")
+        ###### TEST INJECTION AND RECOVERY ##################
+        print("    Running test injection/recovery...")
+        test_time, test_flux, test_flux_err = cleaned_array(self.time, self.f, self.f_err)
+        test_t0 = self.time[0] + 4.2
+        test_per = 4.2
+        test_rp = 0.05
+        test_a = 7.0
+        test_inc = 90.
+        test_injected_lc, ground_truth = self._inject_(test_time, test_flux, test_t0, test_per, test_rp, test_a, test_inc)
+        test_recover = self._recover_(test_time, test_injected_lc, test_flux_err, test_t0, test_per, ground_truth,
+                                      raw_flux=False)
+        print("    Test injection/recovery done.\n")
+        print("    Recovered injected planet? {} \n".format(test_recover))
+        ###### END TEST INJECTION AND RECOVERY ##################
 
-        print(test_recover)
-        """
 
         TCEs = self._tls_search_(max_iterations, tce_threshold, 
                                  time=time, flux=flux, flux_err=flux_err,
@@ -2120,16 +2127,16 @@ class TransitFitter(object):
         @param q2: Kipping et al. (2013) LD parameter #2
         @type q2: float (optional; default=None)
 
-        @return: initialized light curve with injected planet signal
+        @return: initialized light curve with injected planet signal, model light curve
         """
 
         lc = self._model_single_transit_(time, t0, per, rp, a, 
             inc=inc, baseline=baseline, q1=q1, q2=q2)
 
-        return np.array(flux * lc)
+        return np.array(flux * lc), lc
 
 
-    def _recover_(self, time, flux, flux_err, t0, period, t0_tolerance = 0.01,
+    def _recover_(self, time, flux, flux_err, t0, period, ground_truth_model, t0_tolerance = 0.01,
         max_iterations=7, tce_threshold=8.0, show_plots=False,
         raw_flux=True, window_size=3.0):
 
@@ -2149,6 +2156,9 @@ class TransitFitter(object):
 
         @param t0: transit time of signal to recover
         @type t0: float
+
+        @param ground_truth_model: the ground truth injected transit model used for initial SNR heuristic
+        @type ground_truth_model: array
 
         @param t0_tolerance: required fractional t0 agreement of signal
         @type t0_tolerance: float
@@ -2172,6 +2182,8 @@ class TransitFitter(object):
         """
 
         # flatten light curve if input is not already flattened
+        ##########################################
+        ### Needs debugging @ Andy ##############
         if raw_flux:
             flux_err = flux_err / flux
             # flatten flux with running median filter (Wotan package)
@@ -2184,26 +2196,45 @@ class TransitFitter(object):
                 break_tolerance=0.5,                    # Split into segments at breaks longer than that
                 return_trend=False                      # Return trend and flattened light curve
                 )
+        ##########################################
 
-        # run TLS search
-        TCEs = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, time=time, flux=flux,
-                                 flux_err=flux_err, show_plots=show_plots)
 
-        # see if injected signal is recovered
+        # check if ground truth model does better than a straight line ~~~~~~~~
+        # chi2 of ground truth model
+        ground_truth_chi2 = np.sum((flux - ground_truth_model) ** 2 / flux_err ** 2)
+
+        # fit a line
+        linear_func = lambda x, m, b: m * x + b
+        popt, _ = curve_fit(linear_func, time, flux, [0, 1], sigma=flux_err)
+        flux_line = linear_func(time, *popt)
+
+        # chi2 of line fit
+        line_chi2 = np.sum((flux - flux_line) ** 2 / flux_err ** 2)
+
+        delta_chi2 = line_chi2 - ground_truth_chi2
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
         recovery = False
-        for TCE in TCEs:
-            if abs(TCE.period - period) / TCE.period_uncertainty > 5:
-                continue
 
-            if abs(TCE.T0 - t0) / min(TCE.T0, t0) > t0_tolerance:
-                continue
+        # run TLS search only if ground truth model is preferred at 5 sigma (Dressing+2015)
+        if delta_chi2 > 30.863:
+            TCEs = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, time=time, flux=flux,
+                                     flux_err=flux_err, show_plots=show_plots)
 
-            if TCE.SDE < tce_threshold:
-                continue
+            # see if injected signal is recovered
+            for TCE in TCEs:
+                if abs(TCE.period - period) / TCE.period_uncertainty > 5:
+                    continue
 
-            recovery = True
+                if abs(TCE.T0 - t0) / min(TCE.T0, t0) > t0_tolerance:
+                    continue
 
-            break
+                if TCE.SDE < tce_threshold:
+                    continue
+
+                recovery = True
+
+                break
 
         return recovery
 
@@ -2274,6 +2305,12 @@ class TransitFitter(object):
         @param window_size: median smoothing filter window size in days (only used if raw_flux == True)
         @type window_size: float (optional; default=3.0)
         """
+
+
+
+        ##########################################
+        ### Needs debugging @ Andy ##############
+        ##########################################
 
         # random seed initialization
         if isinstance(seed,int) or isinstance(seed,float):
