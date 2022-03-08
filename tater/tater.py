@@ -211,7 +211,7 @@ class TransitFitter(object):
 
     def find_planets(self, time=None, flux=None, flux_err=None, 
         max_iterations=7, tce_threshold=8.0, 
-        period_min=0.8, period_max=100, show_plots=False, save_results=True):
+        period_min=0.5, period_max=100, show_plots=False, save_results=True):
         """Function to identify transits using TLS, then perform model fit with MCMC
 
         @param time: time array
@@ -245,6 +245,8 @@ class TransitFitter(object):
 
         """
 
+
+        """
         ###### TEST INJECTION AND RECOVERY ##################
         print("    Running test injection/recovery...")
         test_time, test_flux, test_flux_err = cleaned_array(self.time, self.f, self.f_err)
@@ -259,6 +261,7 @@ class TransitFitter(object):
         print("    Test injection/recovery done.\n")
         print("    Recovered injected planet? {} \n".format(test_recover))
         ###### END TEST INJECTION AND RECOVERY ##################
+        """
 
 
         TCEs = self._tls_search_(max_iterations, tce_threshold, 
@@ -522,7 +525,7 @@ class TransitFitter(object):
 
     def _tls_search_(self, max_iterations, tce_threshold, 
         time=None, flux=None, flux_err=None, 
-        period_min=0.8, period_max=100, show_plots=False):
+        period_min=0.5, period_max=100, show_plots=False):
         """Helper function to run TLS search for transits in light curve
 
         @param max_iterations: maximum number of search iterations if SDE threshold is never reached
