@@ -250,10 +250,10 @@ class TransitFitter(object):
         ###### TEST INJECTION AND RECOVERY ##################
         print("    Running test injection/recovery...")
         test_time, test_flux, test_flux_err = cleaned_array(self.time, self.f, self.f_err)
-        test_t0 = self.time[0] + 4.2
-        test_per = 4.2
-        test_rp = 0.05
-        test_a = 7.0
+        test_per = 28.7
+        test_t0 = self.time[0] + test_per
+        test_rp = 0.02
+        test_a = 25.0
         test_inc = 90.
         test_injected_lc, ground_truth = self._inject_(test_time, test_flux, test_t0, test_per, test_rp, test_a, test_inc)
         test_recover = self._recover_(test_time, test_injected_lc, test_flux_err, test_t0, test_per, ground_truth,
@@ -262,6 +262,7 @@ class TransitFitter(object):
         print("    Recovered injected planet? {} \n".format(test_recover))
         ###### END TEST INJECTION AND RECOVERY ##################
         """
+
 
 
         TCEs = self._tls_search_(max_iterations, tce_threshold, 
