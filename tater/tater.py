@@ -2243,7 +2243,7 @@ class TransitFitter(object):
         return recovery
 
 
-    def explore(time, flux, flux_err, mstar, rstar,
+    def _explore_(self, time, flux, flux_err, mstar, rstar,
         baseline_min=1, baseline_max=1, baselines=None,
         q1_min=0.25, q1_max=0.25, q1s=None,
         q2_min=0.25, q2_max=0.25, q2s=None,
@@ -2251,7 +2251,7 @@ class TransitFitter(object):
         period_min=0.5, period_max=200, periods=None,
         radius_min=0.5, radius_max=4, radii=None,
         b_min=0, b_max=1, bs=None,
-        N=25, seed=None, t0_tolerance = 0.01,
+        N=25, seed=None, t0_tolerance=0.01,
         max_iterations=7, tce_threshold=8.0, show_plots=False,
         raw_flux=True, window_size=3.0):
         """Function to explore multiple injections & recoveries
@@ -2313,7 +2313,7 @@ class TransitFitter(object):
 
 
         ##########################################
-        ### Needs debugging @ Andy ##############
+        ### Needs debugging! @ Andy ##############
         ##########################################
 
         # random seed initialization
@@ -2380,7 +2380,7 @@ class TransitFitter(object):
             bs = np.random.uniform(b_min,b_max,N)
 
         # calculate remaining needed parameters
-        ars = calc_ars(mstar,periods,rstar)
+        ars = calc_ars(mstar,periods,rstar)   # this function isn't defined anywhere
         asinis = np.sqrt(ars**2 - bs**2)
         incs = list(map(calc_inc,bs,asinis))
 
@@ -2391,8 +2391,8 @@ class TransitFitter(object):
         # helper function to map onto in order to perform injection/recovery
         def helper(theta):
             baseline,q1,q2,t0,per,rp,ars,inc = theta
-            flux = inject(time, flux, t0, per, rp, a, inc, baseline, q1, q2)
-            return recover(time, flux, flux_err, per, t0, 
+            flux = self._inject_(time, flux, t0, per, rp, a, inc, baseline, q1, q2)
+            return self._recover_(time, flux, flux_err, per, t0,
                 t0_tolerance, max_iterations, tce_threshold, show_plots,
                 raw_flux, window_size)
         results = list(map(helper,thetas))
