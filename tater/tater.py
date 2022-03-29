@@ -599,7 +599,7 @@ class TransitFitter(object):
                 M_star_max=self.M_star.value + 0.3,
                 u=[self.u1, self.u2],
                 period_max=period_max,
-                period_min=period_min
+                period_min=period_min#, use_threads=1
             )
 
             # check whether TCE threshold is reached
@@ -2196,7 +2196,7 @@ class TransitFitter(object):
                 flux,                                   # Array of flux values
                 method='median',                        # median filter
                 window_length=window_size,              # The length of the filter window in units of ``time``
-                edge_cutoff=0.5,                        # length (in units of time) to be cut off each edge.
+                edge_cutoff=0.0,                        # length (in units of time) to be cut off each edge.
                 break_tolerance=0.5,                    # Split into segments at breaks longer than that
                 return_trend=False                      # Return trend and flattened light curve
                 )
@@ -2340,6 +2340,24 @@ class TransitFitter(object):
             return 90. if acosi == 0. \
                 else (180./np.pi)*np.arctan(asini/acosi)
 
+        # calculates semimajor axis in solar radii
+        # given input period (days) and stellar mass (solar masses)
+        def calc_a(mstar,per):
+            G = 6.67408e-8 # cm^3 g^-1 s^-2
+            # convert from solar masses to grams
+            mstar_in_g = 1.988e33*mstar
+            # convert from days to seconds
+            per_in_s = 24.*3600*per
+            cm_in_solar_radius = 6.957e10
+            return ((G*mstar_in_g*per_in_s**2)/(4*np.pi**2))**(1./3)\
+                /cm_in_solar_radius
+
+        # calculates a/R* given input period (days),
+        # stellar mass (solar masses), and stellar radius (solar radii)
+        def calc_ars(mstar,per,rstar):
+            semaxis = calc_a(mstar,per)
+            return semaxis/rstar
+
         # Solar radius / Earth radius = 109.1
         rsun_to_rearth = 109.1
 
@@ -2360,9 +2378,9 @@ class TransitFitter(object):
             assert len(t0s) == N, 't0s not length N'
         else:
             if t0_min is None:
-                t0_min = min(t)
+                t0_min = min(time)
             if t0_max is None:
-                t0_max = max(t)	
+                t0_max = max(time)	
             t0s = np.random.uniform(t0_min,t0_max,N)
         if periods is not None:
             assert len(periods) == N, 'periods not length N'
@@ -2387,13 +2405,89 @@ class TransitFitter(object):
         # assemble parameters into single array
         thetas = np.array((baselines,q1s,q2s,
             t0s,periods,radii,ars,incs)).T
+        print(np.shape(thetas))
 
         # helper function to map onto in order to perform injection/recovery
-        def helper(theta):
+        def helper(theta,time=time,flux=flux,flux_err=flux_err):
             baseline,q1,q2,t0,per,rp,ars,inc = theta
-            flux = self._inject_(time, flux, t0, per, rp, a, inc, baseline, q1, q2)
-            return self._recover_(time, flux, flux_err, per, t0,
+            print(theta)
+            flux,flux_model = self._inject_(time, flux, t0, per, rp, ars, inc, baseline, q1, q2)
+            return self._recover_(time, flux, flux_err, t0, per, flux_model,
                 t0_tolerance, max_iterations, tce_threshold, show_plots,
                 raw_flux, window_size)
         results = list(map(helper,thetas))
         return thetas, results
+
+
+
+
+#'''
+'''
+
+
+print("    Running test injection/recovery...")
+test_time = np.linspace(0,75,3600)
+test_flux_err = 1e-3
+test_flux = 1 + np.random.randn(len(test_time))*test_flux_err
+#test_time, test_flux, test_flux_err = cleaned_array(self.time, self.f, self.f_err)
+test_per = 28.7
+#test_t0 = self.time[0] + test_per
+test_t0 = test_time[0] + test_per
+#test_rp = 0.02
+test_rp = 0.1
+test_a = 25.0
+test_inc = 90.
+test_baseline = 1.
+test_q1 = 0.25
+test_q2 = 0.25
+mstar = 1 * u.M_sun # solar mass
+rstar = 1 * u.R_sun # solar radius
+TransitFitterObject = TransitFitter(111111111)
+TransitFitterObject.R_star = rstar
+TransitFitterObject.M_star = mstar
+TransitFitterObject.u1 = test_q1
+TransitFitterObject.u2 = test_q2
+test_injected_lc, ground_truth = TransitFitter._inject_(TransitFitterObject, test_time, test_flux, test_t0, test_per, test_rp, test_a, test_inc, test_baseline, test_q1, test_q2)
+trial_planets,results = TransitFitter._explore_(TransitFitterObject, test_time, test_injected_lc, test_flux_err, mstar.value, rstar.value)
+#test_recover = TransitFitter._recover_(TransitFitterObject, test_time, test_injected_lc, test_flux_err, test_t0, test_per, ground_truth,
+#			      raw_flux=False)
+print("    Test injection/recovery done.\n")
+#print("    Recovered injected planet? {} \n".format(test_recover))
+
+
+#t = np.linspace(0,75,3600)
+#yerr = 1e-3
+#y = 1 + np.random.randn(len(t))*yerr
+##periods = np.linspace(5,50,46)
+##radii = np.linspace(0.5,5,10)/109.1 # convert from earth to sun radii
+##durations = np.linspace(1,5,5)/24
+#
+##results = explore(t, y, yerr, periods, radii, durations)
+##import pdb; pdb.set_trace()
+##results = np.random.randint(0,2,len(periods)*len(radii)).reshape((len(periods),len(radii)))
+#
+#mstar = 1 # solar mass
+#rstar = 1 # solar radius
+#TransitFitterObject = TransitFitter(111111111)
+#trial_planets,results = TransitFitter._explore_(TransitFitterObject,t, y, yerr, mstar, rstar)
+print(trial_planets,results)
+
+
+fig, ax = plt.subplots(1,figsize=(10,10))
+for i in range(len(trial_planets)):
+	baseline,q1,q2,t0,per,rp,a,inc = trial_planets[i]
+	recovered = results[i]
+	fmt = 'bo' if recovered else 'ro'
+	ax.plot(per,rp*109.1,fmt)
+
+#for i,period in enumerate(periods):
+#	for j,rp in enumerate(radii):
+#		if results[i][j]:
+#			ax.plot(period,rp*109.1,'ko')
+
+ax.set_xlabel('Period (d)')
+ax.set_ylabel('Radius (R_earth)')
+fig.savefig('test_recovery.png')
+plt.show()
+'''
+#'''
