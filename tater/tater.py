@@ -599,7 +599,8 @@ class TransitFitter(object):
                 M_star_max=self.M_star.value + 0.3,
                 u=[self.u1, self.u2],
                 period_max=period_max,
-                period_min=period_min#, use_threads=1
+                period_min=period_min, use_threads=1
+                #period_min=period_min#, use_threads=1
             )
 
             # check whether TCE threshold is reached
@@ -2164,7 +2165,7 @@ class TransitFitter(object):
         @param ground_truth_model: the ground truth injected transit model used for initial SNR heuristic
         @type ground_truth_model: array
 
-        @param t0_tolerance: required fractional t0 agreement of signal
+        @param t0_tolerance: required t0 agreement of signal (as fraction of period)
         @type t0_tolerance: float
 
         @param max_iterations: maximum number of search iterations if SDE threshold is never reached
@@ -2230,7 +2231,10 @@ class TransitFitter(object):
                 if abs(TCE.period - period) / TCE.period_uncertainty > 5:
                     continue
 
-                if abs(TCE.T0 - t0) / min(TCE.T0, t0) > t0_tolerance:
+		# fractional phase difference between injected and recovered T0
+                phase_diff = (abs(TCE.T0 - t0) % period) / period
+		# check both sides of phase difference
+                if min(phase_diff, abs(phase_diff - 1)) > t0_tolerance:
                     continue
 
                 if TCE.SDE < tce_threshold:
@@ -2291,7 +2295,7 @@ class TransitFitter(object):
         N: number of sample draws to run and return
         seed: random seed input to gaurantee repeatability
 
-        @param t0_tolerance: required fractional t0 agreement of signal
+        @param t0_tolerance: required t0 agreement of signal (as fraction of period)
         @type t0_tolerance: float
 
         @param max_iterations: maximum number of search iterations if SDE threshold is never reached
@@ -2421,73 +2425,73 @@ class TransitFitter(object):
 
 
 
-#'''
-'''
+if __name__ == "__main__":
+	# TESTS
+	print("    Running test injection/recovery...")
+	test_time = np.linspace(0,75,3600)
+	test_flux_err = np.array([1e-3]*len(test_time))
+	test_flux = 1 + np.random.randn(len(test_time))*test_flux_err
+	#test_time, test_flux, test_flux_err = cleaned_array(self.time, self.f, self.f_err)
+	test_per = 28.7
+	#test_t0 = self.time[0] + test_per
+	test_t0 = test_time[0] + test_per
+	#test_rp = 0.02
+	test_rp = 0.1
+	test_a = 25.0
+	test_inc = 90.
+	test_baseline = 1.
+	test_q1 = 0.25
+	test_q2 = 0.25
+	mstar = 1 * u.M_sun # solar mass
+	rstar = 1 * u.R_sun # solar radius
+	TransitFitterObject = TransitFitter(111111111)
+	TransitFitterObject.R_star = rstar
+	TransitFitterObject.M_star = mstar
+	TransitFitterObject.u1 = test_q1
+	TransitFitterObject.u2 = test_q2
+	N = 50
+	test_periods = np.random.shuffle(np.linspace(0.5,100,N))
+	test_radii = np.random.shuffle(np.linspace(0.5,8,N))
+	test_injected_lc, ground_truth = TransitFitter._inject_(TransitFitterObject, test_time, test_flux, test_t0, test_per, test_rp, test_a, test_inc, test_baseline, test_q1, test_q2)
+	trial_planets,results = TransitFitter._explore_(TransitFitterObject, test_time, test_injected_lc, test_flux_err, mstar.value, rstar.value,
+		periods=test_periods,radii=test_radii,N=N,show_plots=False)
+	#test_recover = TransitFitter._recover_(TransitFitterObject, test_time, test_injected_lc, test_flux_err, test_t0, test_per, ground_truth,
+	#			      raw_flux=False)
+	#print("    Test injection/recovery done.\n")
+	#print("    Recovered injected planet? {} \n".format(test_recover))
 
 
-print("    Running test injection/recovery...")
-test_time = np.linspace(0,75,3600)
-test_flux_err = 1e-3
-test_flux = 1 + np.random.randn(len(test_time))*test_flux_err
-#test_time, test_flux, test_flux_err = cleaned_array(self.time, self.f, self.f_err)
-test_per = 28.7
-#test_t0 = self.time[0] + test_per
-test_t0 = test_time[0] + test_per
-#test_rp = 0.02
-test_rp = 0.1
-test_a = 25.0
-test_inc = 90.
-test_baseline = 1.
-test_q1 = 0.25
-test_q2 = 0.25
-mstar = 1 * u.M_sun # solar mass
-rstar = 1 * u.R_sun # solar radius
-TransitFitterObject = TransitFitter(111111111)
-TransitFitterObject.R_star = rstar
-TransitFitterObject.M_star = mstar
-TransitFitterObject.u1 = test_q1
-TransitFitterObject.u2 = test_q2
-test_injected_lc, ground_truth = TransitFitter._inject_(TransitFitterObject, test_time, test_flux, test_t0, test_per, test_rp, test_a, test_inc, test_baseline, test_q1, test_q2)
-trial_planets,results = TransitFitter._explore_(TransitFitterObject, test_time, test_injected_lc, test_flux_err, mstar.value, rstar.value)
-#test_recover = TransitFitter._recover_(TransitFitterObject, test_time, test_injected_lc, test_flux_err, test_t0, test_per, ground_truth,
-#			      raw_flux=False)
-print("    Test injection/recovery done.\n")
-#print("    Recovered injected planet? {} \n".format(test_recover))
+	#t = np.linspace(0,75,3600)
+	#yerr = 1e-3
+	#y = 1 + np.random.randn(len(t))*yerr
+	##periods = np.linspace(5,50,46)
+	##radii = np.linspace(0.5,5,10)/109.1 # convert from earth to sun radii
+	##durations = np.linspace(1,5,5)/24
+	#
+	##results = explore(t, y, yerr, periods, radii, durations)
+	##import pdb; pdb.set_trace()
+	##results = np.random.randint(0,2,len(periods)*len(radii)).reshape((len(periods),len(radii)))
+	#
+	#mstar = 1 # solar mass
+	#rstar = 1 # solar radius
+	#TransitFitterObject = TransitFitter(111111111)
+	#trial_planets,results = TransitFitter._explore_(TransitFitterObject,t, y, yerr, mstar, rstar)
+	print(trial_planets,results)
 
 
-#t = np.linspace(0,75,3600)
-#yerr = 1e-3
-#y = 1 + np.random.randn(len(t))*yerr
-##periods = np.linspace(5,50,46)
-##radii = np.linspace(0.5,5,10)/109.1 # convert from earth to sun radii
-##durations = np.linspace(1,5,5)/24
-#
-##results = explore(t, y, yerr, periods, radii, durations)
-##import pdb; pdb.set_trace()
-##results = np.random.randint(0,2,len(periods)*len(radii)).reshape((len(periods),len(radii)))
-#
-#mstar = 1 # solar mass
-#rstar = 1 # solar radius
-#TransitFitterObject = TransitFitter(111111111)
-#trial_planets,results = TransitFitter._explore_(TransitFitterObject,t, y, yerr, mstar, rstar)
-print(trial_planets,results)
+	fig, ax = plt.subplots(1,figsize=(10,10))
+	for i in range(len(trial_planets)):
+		baseline,q1,q2,t0,per,rp,a,inc = trial_planets[i]
+		recovered = results[i]
+		fmt = 'bo' if recovered else 'ro'
+		ax.plot(per,rp*109.1,fmt)
 
+	#for i,period in enumerate(periods):
+	#	for j,rp in enumerate(radii):
+	#		if results[i][j]:
+	#			ax.plot(period,rp*109.1,'ko')
 
-fig, ax = plt.subplots(1,figsize=(10,10))
-for i in range(len(trial_planets)):
-	baseline,q1,q2,t0,per,rp,a,inc = trial_planets[i]
-	recovered = results[i]
-	fmt = 'bo' if recovered else 'ro'
-	ax.plot(per,rp*109.1,fmt)
-
-#for i,period in enumerate(periods):
-#	for j,rp in enumerate(radii):
-#		if results[i][j]:
-#			ax.plot(period,rp*109.1,'ko')
-
-ax.set_xlabel('Period (d)')
-ax.set_ylabel('Radius (R_earth)')
-fig.savefig('test_recovery.png')
-plt.show()
-'''
-#'''
+	ax.set_xlabel('Period (d)')
+	ax.set_ylabel('Radius (R_earth)')
+	fig.savefig('test_recovery.png')
+	plt.show()
