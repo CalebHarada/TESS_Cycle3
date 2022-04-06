@@ -599,8 +599,8 @@ class TransitFitter(object):
                 M_star_max=self.M_star.value + 0.3,
                 u=[self.u1, self.u2],
                 period_max=period_max,
-                period_min=period_min, use_threads=1
-                #period_min=period_min#, use_threads=1
+                #period_min=period_min, use_threads=1
+                period_min=period_min#, use_threads=1
             )
 
             # check whether TCE threshold is reached
