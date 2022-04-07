@@ -120,6 +120,7 @@ class TransitFitter(object):
         self.nsteps = 350
         self.nburn = 250
 
+        self.injection_recovery_results = None
 
     def download_data(self, window_size=3.0, n_sectors=None, show_plot=False):
         """Function to download data with Lightkurve and flatten raw light curve
@@ -599,8 +600,8 @@ class TransitFitter(object):
                 M_star_max=self.M_star.value + 0.3,
                 u=[self.u1, self.u2],
                 period_max=period_max,
-                #period_min=period_min, use_threads=1
-                period_min=period_min#, use_threads=1
+                period_min=period_min, use_threads=1
+                #period_min=period_min#, use_threads=1
             )
 
             # check whether TCE threshold is reached
@@ -2420,6 +2421,9 @@ class TransitFitter(object):
                 t0_tolerance, max_iterations, tce_threshold, show_plots,
                 raw_flux, window_size)
         results = list(map(helper,thetas))
+
+        # save output in object and return
+        self.injection_recovery_results = [thetas,results]
         return thetas, results
 
 
