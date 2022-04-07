@@ -4,6 +4,7 @@ matplotlib.use('agg')
 import sys
 import tater
 
+inject_recover = True
 
 # choose a planet
 #tic_ids = [43647325]  # WASP-35 b
@@ -34,22 +35,36 @@ for i,tic_id in enumerate(tic_ids):
 	# download data and show plot
 	transit_fitter.download_data(
 		window_size=3.0,
-		n_sectors=1,  # number of TESS sectors to load (default: all)
+		#n_sectors=1,  # number of TESS sectors to load (default: all)
 		show_plot=False  # option to show light curve (default: false)
 		)
 
-	# find planets
-	planets = transit_fitter.find_planets(
-		max_iterations=4,  # maximum number of search iterations (default: 7)
-		tce_threshold=8.0,  # Minimum SDE that counts as a TCE (default: 8.0)
-		period_min=0.8, # Minimum TLS period to explore
-		show_plots=False,  # option to show periodogram and transit model (default: false)
-		save_results = True  # save all results to PDF/txt files (default: true)
-		)
+	# search for planets and save results
+	if not inject_recover:
+		# find planets
+		planets = transit_fitter.find_planets(
+			max_iterations=4,  # maximum number of search iterations (default: 7)
+			tce_threshold=8.0,  # Minimum SDE that counts as a TCE (default: 8.0)
+			period_min=0.8, # Minimum TLS period to explore
+			show_plots=False,  # option to show periodogram and transit model (default: false)
+			save_results = True  # save all results to PDF/txt files (default: true)
+			)
+		
+		if len(transit_fitter.TCEs) >= 1:
+			# do vetting
+			transit_fitter.vet_TCEs(
+				save_results=True  # save all results to PDF/txt files (default: true)
+			)
 
-	
-	if len(transit_fitter.TCEs) >= 1:
-		# do vetting
-		transit_fitter.vet_TCEs(
-			save_results=True  # save all results to PDF/txt files (default: true)
-		)
+	# or run injection and recovery
+	else:
+		transit_fitter._explore_(
+			time=transit_fitter.time_raw, # Light curve time series
+			flux=transit_fitter.f_raw, # Light curve flux
+			flux_err=transit_fitter.ferr_raw, # Light curve flux error
+			mstar=transit_fitter.M_star.value, # Stellar mass (Solar masses)
+			rstar=transit_fitter.R_star.value, # Stellar radius (Solar radii)
+			N=50, # number of injections (default: 25)
+			raw_flux=True # option to inject signal before or after flattening (default: True)
+			)
+
