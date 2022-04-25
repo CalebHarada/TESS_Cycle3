@@ -266,7 +266,7 @@ class TransitFitter(object):
 
 
 
-        TCEs = self._tls_search_(max_iterations, tce_threshold, 
+        TCEs,_ = self._tls_search_(max_iterations, tce_threshold, 
                                  time=time, flux=flux, flux_err=flux_err,
                                  period_min=period_min, period_max=period_max, 
                                  show_plots=True) if show_plots \
@@ -526,8 +526,9 @@ class TransitFitter(object):
 
 
     def _tls_search_(self, max_iterations, tce_threshold, 
-        time=None, flux=None, flux_err=None, 
-        period_min=0.5, period_max=100, show_plots=False):
+        time=None, flux=None, flux_err=None, mask=None,
+        period_min=0.5, period_max=100, 
+        make_plots=True, show_plots=False):
         """Helper function to run TLS search for transits in light curve
 
         @param max_iterations: maximum number of search iterations if SDE threshold is never reached
@@ -545,16 +546,22 @@ class TransitFitter(object):
         @param flux_err: flux uncertainty array
         @type flux_err: numpy array (optional; default=None)
 
+        @param mask: in-transit boolean mask array
+        @type mask: numpy array (optional; default=None)
+
         @param period_min: minimum orbital period for TLS to explore
         @type period_min: float (optional; default=0.8)
 
         @param period_max: maximum orbital period for TLS to explore
         @type period_max: float (optional; default=100)
 
-        @param show_plots: show plots of periodogram and best TLS model
+        @param make_plots: make plots of periodogram and best TLS model
+        @type make_plots: bool (optional; default=True)
+
+        @param show_plots: show plots of periodogram and best TLS model (only used if make_plots = True)
         @type show_plots: bool (optional; default=False)
 
-        @return self.TCEs: list of threshold crossing events (TCEs)
+        @return self.TCEs, intransit: list of threshold crossing events (TCEs) and in-transit mask
 
         """
 
@@ -569,11 +576,14 @@ class TransitFitter(object):
         # set maximum period to search (if not given)
         if period_max is None:
             period_max = np.ptp(time) / 2  # require at least 2 transits
-        if period_max > 100:
-            period_max = 100 # no more than 100 days period
+        #if period_max > 100:
+        #    period_max = 100 # no more than 100 days period
 
         # initialize in-transit mask
-        intransit = np.zeros(len(time), dtype="bool")
+        if mask is None:
+            intransit = np.zeros(len(time), dtype="bool")
+        else:
+            intransit = mask
 
         # TCE list
         TCEs = []
@@ -582,13 +592,13 @@ class TransitFitter(object):
         for i in range(max_iterations):
 
             # clean arrays for TLS, masking out out-of-transit flux
-            time, flux, flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
+            new_time, new_flux, new_flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
             # leave loop if previous TLS iterations have completely masked all data
             if len(time) == 0:
                 break
 
             # initializes TLS
-            tls = transitleastsquares(time, flux, flux_err)
+            tls = transitleastsquares(new_time, new_flux, new_flux_err)
 
             # Get TLS power spectrum; use stellar params
             tls_results = tls.power(
@@ -622,64 +632,65 @@ class TransitFitter(object):
             # instead, estimate from period and stellar density
             tls_results.duration = self._estimate_duration_(tls_results.period)
 
-            # initialize periodogram figure
-            fig1, ax1 = plt.subplots(1, 1, figsize=(12, 8))
-            ax1.set_xlim([tls_results.periods.min(), tls_results.periods.max()])
-            ax1.set_xlabel("period (days)")
-            ax1.set_ylabel("power")
-            ax1.set_title("Peak at {:.4f} days (SDE = {:.4f})".format(tls_results.period, tls_results.SDE))
-
-            # label TCE threshold, best period
-            ax1.axhline(tce_threshold, ls="--", c="r", alpha=0.6)
-            ax1.axvline(tls_results.period, alpha=0.2, lw=6, c="b")
-
-            # label alias periods
-            for i in range(2, 15):
-                ax1.axvline(tls_results.period * i, alpha=0.2, lw=1, c="b", ls='--')
-                ax1.axvline(tls_results.period / i, alpha=0.2, lw=1, c="b", ls='--')
-
-            # plot periodogram
-            ax1.plot(tls_results.periods, tls_results.power, 'k-', lw=1)
-
-            # initialize TLS transit model figure
-            fig2, ax2 = plt.subplots(1, 1, figsize=(12, 8))
-            ax2.set_title("TLS transit model (preliminary)")
-            ax2.set_xlim([-tls_results.duration*24, tls_results.duration*24])
-            ax2.set_xlabel("phase (hrs)")
-            ax2.set_ylabel("relative flux")
-
-            # create a batman model using the initial TLS parameters
-            tls_model = self._model_single_transit_(t=time,
-                                                    t0=tls_results.T0,
-                                                    per=tls_results.period,
-                                                    rp=tls_results.rp_rs,
-                                                    a=self._P_to_a_(tls_results.period)
-                                                    )
-
-            # fold model and data
-            phase = (time - tls_results.T0 + 0.5 * tls_results.period) % tls_results.period - 0.5 * tls_results.period
-            tls_model = tls_model[np.argsort(phase)]
-            f_fold = flux[np.argsort(phase)]
-            phase = np.sort(phase)
-
-            # plot folded data and TLS transit model
-            ax2.scatter(phase * 24, f_fold, s=1, c='k', rasterized=True)
-            ax2.plot(phase * 24, tls_model, "b-", lw=3)
-
-            # option to show plots
-            if show_plots:
-                plt.ion(), plt.show(), plt.pause(0.001)
-
-            # add "False Positive" keyword + plots to tls_results object
-            tls_results.periodogram_fig = fig1
-            tls_results.model_fig = fig2
-            tls_results.FP = "No"
-
-            plt.close()
+            if make_plots:
+                # initialize periodogram figure
+                fig1, ax1 = plt.subplots(1, 1, figsize=(12, 8))
+                ax1.set_xlim([tls_results.periods.min(), tls_results.periods.max()])
+                ax1.set_xlabel("period (days)")
+                ax1.set_ylabel("power")
+                ax1.set_title("Peak at {:.4f} days (SDE = {:.4f})".format(tls_results.period, tls_results.SDE))
+    
+                # label TCE threshold, best period
+                ax1.axhline(tce_threshold, ls="--", c="r", alpha=0.6)
+                ax1.axvline(tls_results.period, alpha=0.2, lw=6, c="b")
+    
+                # label alias periods
+                for j in range(2, 15):
+                    ax1.axvline(tls_results.period * j, alpha=0.2, lw=1, c="b", ls='--')
+                    ax1.axvline(tls_results.period / j, alpha=0.2, lw=1, c="b", ls='--')
+    
+                # plot periodogram
+                ax1.plot(tls_results.periods, tls_results.power, 'k-', lw=1)
+    
+                # initialize TLS transit model figure
+                fig2, ax2 = plt.subplots(1, 1, figsize=(12, 8))
+                ax2.set_title("TLS transit model (preliminary)")
+                ax2.set_xlim([-tls_results.duration*24, tls_results.duration*24])
+                ax2.set_xlabel("phase (hrs)")
+                ax2.set_ylabel("relative flux")
+    
+                # create a batman model using the initial TLS parameters
+                tls_model = self._model_single_transit_(t=new_time,
+                                                        t0=tls_results.T0,
+                                                        per=tls_results.period,
+                                                        rp=tls_results.rp_rs,
+                                                        a=self._P_to_a_(tls_results.period)
+                                                        )
+    
+                # fold model and data
+                phase = (new_time - tls_results.T0 + 0.5 * tls_results.period) % tls_results.period - 0.5 * tls_results.period
+                tls_model = tls_model[np.argsort(phase)]
+                f_fold = new_flux[np.argsort(phase)]
+                phase = np.sort(phase)
+    
+                # plot folded data and TLS transit model
+                ax2.scatter(phase * 24, f_fold, s=1, c='k', rasterized=True)
+                ax2.plot(phase * 24, tls_model, "b-", lw=3)
+    
+                # option to show plots
+                if show_plots:
+                    plt.ion(), plt.show(), plt.pause(0.001)
+    
+                # add "False Positive" keyword + plots to tls_results object
+                tls_results.periodogram_fig = fig1
+                tls_results.model_fig = fig2
+                tls_results.FP = "No"
+    
+                plt.close()
 
             # mask the detected transit signal before next iteration of TLS
             # length of mask is 2.5 x the transit duration
-            intransit = transit_mask(time, tls_results.period, 2.5 * tls_results.duration, tls_results.T0)
+            intransit += transit_mask(time, tls_results.period, 2.5 * tls_results.duration, tls_results.T0)
 
             # make planet vetting figures
             # self._generate_vet_figures_(tls_results)
@@ -687,7 +698,7 @@ class TransitFitter(object):
             # append tls_results to TCE list
             TCEs.append(tls_results)
 
-        return TCEs
+        return TCEs,intransit
 
 
     def _get_intransit_flux_(self, tce_dict, msk=[]):
@@ -2143,7 +2154,7 @@ class TransitFitter(object):
 
 
     def _recover_(self, time, flux, flux_err, t0, period, ground_truth_model, t0_tolerance = 0.01,
-        max_iterations=7, tce_threshold=8.0, show_plots=False,
+        max_iterations=7, tce_threshold=8.0, make_plots=False, show_plots=False,
         raw_flux=True, window_size=3.0):
 
         """Function to recover signals from light curve
@@ -2174,6 +2185,9 @@ class TransitFitter(object):
 
         @param tce_threshold: Minimum Signal Detection Efficiency (SDE) that counts as a Threshold Crossing Event (TCE)
         @type tce_threshold: float (optional; default=8.0)
+
+        @param make_plots: make plots of periodogram and best TLS model
+        @type make_plots: bool (optional; default=True)
 
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
@@ -2224,11 +2238,21 @@ class TransitFitter(object):
 
         # run TLS search only if ground truth model is preferred at 5 sigma (Dressing+2015)
         if delta_chi2 > 30.863:
-            TCEs = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, time=time, flux=flux,
-                                     flux_err=flux_err, show_plots=show_plots)
+            # mask previous transits
+            intransit = np.zeros(len(self.time_raw), dtype=bool)
 
             # see if injected signal is recovered
-            for TCE in TCEs:
+            for i in range(max_iterations):
+                TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux,
+                                     flux_err=flux_err, mask=intransit, period_min=period*0.95, period_max=period*1.05, make_plots=make_plots, show_plots=show_plots)
+                                     #flux_err=flux_err, mask=intransit, make_plots=make_plots, show_plots=show_plots)
+
+                # stop searching if no TCEs found
+                if len(TCEs) == 0:
+                    break
+
+                TCE = TCEs[0] # only run _tls_search_ one iteration at a time
+
                 if abs(TCE.period - period) / TCE.period_uncertainty > 5:
                     continue
 
@@ -2249,6 +2273,7 @@ class TransitFitter(object):
 
 
     def _explore_(self, time, flux, flux_err, mstar, rstar,
+        smart_search=False, smart_search_Nbins=10, smart_search_Nperbin=10,
         baseline_min=1, baseline_max=1, baselines=None,
         q1_min=0.25, q1_max=0.25, q1s=None,
         q2_min=0.25, q2_max=0.25, q2s=None,
@@ -2270,8 +2295,14 @@ class TransitFitter(object):
         @param flux_err: flux uncertainty array
         @type flux_err: numpy array
 
-        mstar: stellar mass (Solar mass)
-        rstar: stellar radius (Solar radii)
+        @param mstar: stellar mass (Solar mass)
+        @type mstar: float
+
+        @param rstar: stellar radius (Solar radii)
+        @type mstar: float
+
+        @smart_search: 
+
         baseline_min: flux baseline minimum
         baseline_max: flux baseline maximum
         baselines: flux array (overrides baseline_min and baseline_max)
@@ -2314,12 +2345,6 @@ class TransitFitter(object):
         @param window_size: median smoothing filter window size in days (only used if raw_flux == True)
         @type window_size: float (optional; default=3.0)
         """
-
-
-
-        ##########################################
-        ### Needs debugging! @ Andy ##############
-        ##########################################
 
         # random seed initialization
         if isinstance(seed,int) or isinstance(seed,float):
@@ -2366,6 +2391,10 @@ class TransitFitter(object):
         # Solar radius / Earth radius = 109.1
         rsun_to_rearth = 109.1
 
+        # overwrite and recalculate N if using smart_search
+        if smart_search:
+            N = smart_search_Nbins * smart_search_Nperbin
+
         # create input parameter samples (as needed)
         if baselines is not None:
             assert len(baselines) == N, 'baselines not length N'
@@ -2379,6 +2408,10 @@ class TransitFitter(object):
             assert len(q2s) == N, 'q2s not length N'
         else:
             q2s = np.random.uniform(q2_min,q2_max,N)
+        if bs is not None:
+            assert len(bs) == N, 'bs not length N'
+        else:
+            bs = np.random.uniform(b_min,b_max,N)
         if t0s is not None:
             assert len(t0s) == N, 't0s not length N'
         else:
@@ -2387,43 +2420,130 @@ class TransitFitter(object):
             if t0_max is None:
                 t0_max = max(time)	
             t0s = np.random.uniform(t0_min,t0_max,N)
-        if periods is not None:
-            assert len(periods) == N, 'periods not length N'
+
+        # pick and explore all periods and radii at once
+        if not smart_search:
+            if periods is not None:
+                assert len(periods) == N, 'periods not length N'
+            else:
+                periods = 10**np.random.uniform(
+                    np.log10(period_min),np.log10(period_max),N)
+            if radii is not None:
+                assert len(radii) == N, 'radii not length N'
+            else:
+                radii = np.random.uniform(radius_min,radius_max,N)/\
+                    (rsun_to_rearth*rstar)
+    
+            # calculate remaining needed parameters
+            ars = calc_ars(mstar,periods,rstar)
+            asinis = np.sqrt(ars**2 - bs**2)
+            incs = list(map(calc_inc,bs,asinis))
+    
+            # assemble parameters into single array
+            thetas = np.array((baselines,q1s,q2s,
+                t0s,periods,radii,ars,incs)).T
+    
+            # helper function to map onto in order to perform injection/recovery
+            def helper(theta,time=time,flux=flux,flux_err=flux_err):
+                baseline,q1,q2,t0,per,rp,ars,inc = theta
+                print(theta)
+                flux,flux_model = self._inject_(time, flux, t0, per, rp, ars, inc, baseline, q1, q2)
+                return self._recover_(time, flux, flux_err, t0, per, flux_model,
+                    t0_tolerance, max_iterations, tce_threshold, show_plots,
+                    raw_flux, window_size)
+            results = list(map(helper,thetas))
+    
+            # save output in object and return
+            self.injection_recovery_results = [thetas,results]
+
+        # if smart_search, bin periods and explore radii sequentially
         else:
-            periods = 10**np.random.uniform(
-                np.log10(period_min),np.log10(period_max),N)
-        if radii is not None:
-            assert len(radii) == N, 'radii not length N'
-        else:
-            radii = np.random.uniform(radius_min,radius_max,N)/\
-                (rsun_to_rearth*rstar)
-        if bs is not None:
-            assert len(bs) == N, 'bs not length N'
-        else:
-            bs = np.random.uniform(b_min,b_max,N)
+            thetas = []
+            results = []
 
-        # calculate remaining needed parameters
-        ars = calc_ars(mstar,periods,rstar)   # this function isn't defined anywhere
-        asinis = np.sqrt(ars**2 - bs**2)
-        incs = list(map(calc_inc,bs,asinis))
+            # create period bins in log space
+            period_bins = np.logspace(np.log10(period_min),np.log10(period_max),smart_search_Nbins+1)
 
-        # assemble parameters into single array
-        thetas = np.array((baselines,q1s,q2s,
-            t0s,periods,radii,ars,incs)).T
-        print(np.shape(thetas))
+            for i in range(len(period_bins)-1):
+                period_bin_min = period_bins[i]
+                period_bin_max = period_bins[i+1]
+                per = np.random.uniform(period_bin_min,period_bin_max)
 
-        # helper function to map onto in order to perform injection/recovery
-        def helper(theta,time=time,flux=flux,flux_err=flux_err):
-            baseline,q1,q2,t0,per,rp,ars,inc = theta
-            print(theta)
-            flux,flux_model = self._inject_(time, flux, t0, per, rp, ars, inc, baseline, q1, q2)
-            return self._recover_(time, flux, flux_err, t0, per, flux_model,
-                t0_tolerance, max_iterations, tce_threshold, show_plots,
-                raw_flux, window_size)
-        results = list(map(helper,thetas))
+                # start at 1% transit depth radius (if within range)
+                rprs = np.sqrt(0.01)
+                radius = rprs * rsun_to_rearth * rstar
+                radius = max(radius,radius_min)
+                radius = min(radius,radius_max)
+                rprs = radius / (rsun_to_rearth * rstar)
 
-        # save output in object and return
-        self.injection_recovery_results = [thetas,results]
+                for j in range(smart_search_Nperbin):
+                    print('Testing Rp = ' + str(radius) + ' Rearth, P = ' + str(per) + ' d')
+                    baseline = baselines[i*smart_search_Nbins + j]
+                    q1 = q1s[i*smart_search_Nbins + j]
+                    q2 = q2s[i*smart_search_Nbins + j]
+                    b = bs[i*smart_search_Nbins + j]
+                    t0 = t0s[i*smart_search_Nbins + j]
+
+                    # calculate remaining needed parameters
+                    ar = calc_ars(mstar,per,rstar)
+                    asini = np.sqrt(ar**2 - b**2)
+                    inc = calc_inc(b,asini)
+                    rprs = radius / (rsun_to_rearth * rstar)
+
+                    # run injection/recovery once and save input/output
+                    theta = np.array((baseline,q1,q2,t0,per,rprs,ar,inc))
+                    new_flux,new_flux_model = self._inject_(time, flux, t0, per, rprs, ar, inc, baseline, q1, q2)
+                    result = self._recover_(time, new_flux, flux_err, t0, per, new_flux_model,
+                        t0_tolerance, max_iterations, tce_threshold, show_plots,
+                        raw_flux, window_size)
+                    thetas += [theta]
+                    results += [result]
+                    print('PASS') if result else print('FAIL')
+
+                    ###
+                    #look at 85% lower limit of passes and 85% upper limit of failures
+                    #average of two values should be estimate of boundary median
+                    #half the difference should be estimate of boundary std dev
+                    #draw from norm(boundary median, boundary std dev) truncated at radius boundaries
+                    #repeat ad nauseum
+                    ###
+
+                    # don't find new period and radius when you just did the last injection in your current period bin
+                    if j+1 < smart_search_Nperbin:
+                        # select radii inside period bin range
+                        bin_rprs = np.array(thetas)[np.logical_and(np.array(thetas)[:,4] > period_bin_min, np.array(thetas)[:,4] < period_bin_max)][:,5]
+                        bin_radii = bin_rprs * rsun_to_rearth * rstar
+                        bin_results = np.array(results)[np.logical_and(np.array(thetas)[:,4] > period_bin_min, np.array(thetas)[:,4] < period_bin_max)]
+                        # separate radii that passed injection from those that failed
+                        pass_radii = np.append(bin_radii[bin_results],radius_max) # include radius_max as defacto pass as initial distribution broadener
+                        fail_radii = np.append(bin_radii[~bin_results],radius_min) # include radius_min as defacto fail as initial distribution broadener
+                        # estimate pass/fail boundary as normal CDF
+                        lower_1sigma_est = np.percentile(pass_radii,15.865,interpolation='linear') # CDF percentile to get lower end of 1 sigma normal PDF
+                        upper_1sigma_est = np.percentile(fail_radii,84.135,interpolation='linear') # CDF percentile to get upper end of 1 sigma normal PDF
+                        norm_med_est = (upper_1sigma_est+lower_1sigma_est)/2 # average provides estimate of boundary center
+                        norm_std_est = abs(upper_1sigma_est-lower_1sigma_est)/2 # half the difference provides estimats of boundary std dev width
+                        print('1')
+    
+                        # draw next radius to explore from estimated normal dist (truncated at radius_min and radius_max
+                        radius = np.random.normal(loc=norm_med_est,scale=norm_std_est)
+                        count = 0
+                        while radius > radius_max or radius < radius_min:
+                            count += 1
+                            if count == 10:
+                                import pdb; pdb.set_trace()
+                            print('2')
+                            print(norm_med_est,norm_std_est)
+                            radius = np.random.normal(loc=norm_med_est,scale=norm_std_est)
+    
+                        # draw a new random period as well
+                        per = np.random.uniform(period_bin_min,period_bin_max)
+                        print('3')
+
+                print('Period bin ' + str(i+1) + ' of ' + str(smart_search_Nbins) + ' (' + str(period_bin_min) + ' d - ' + str(period_bin_max) + 'd) complete')
+
+            # save output in object and return
+            self.injection_recovery_results = [thetas,results]
+
         return thetas, results
 
 
@@ -2432,7 +2552,7 @@ class TransitFitter(object):
 if __name__ == "__main__":
 	# TESTS
 	print("    Running test injection/recovery...")
-	test_time = np.linspace(0,75,3600)
+	test_time = np.linspace(1,76,3600)
 	test_flux_err = np.array([1e-3]*len(test_time))
 	test_flux = 1 + np.random.randn(len(test_time))*test_flux_err
 	#test_time, test_flux, test_flux_err = cleaned_array(self.time, self.f, self.f_err)
@@ -2453,12 +2573,19 @@ if __name__ == "__main__":
 	TransitFitterObject.M_star = mstar
 	TransitFitterObject.u1 = test_q1
 	TransitFitterObject.u2 = test_q2
+
 	N = 50
 	test_periods = np.random.shuffle(np.linspace(0.5,100,N))
 	test_radii = np.random.shuffle(np.linspace(0.5,8,N))
 	test_injected_lc, ground_truth = TransitFitter._inject_(TransitFitterObject, test_time, test_flux, test_t0, test_per, test_rp, test_a, test_inc, test_baseline, test_q1, test_q2)
+
+	TransitFitterObject.lc = test_injected_lc
+	TransitFitterObject.time_raw = test_time
+	TransitFitterObject.f_raw = test_flux
+	TransitFitterObject.ferr_raw = test_flux_err
+
 	trial_planets,results = TransitFitter._explore_(TransitFitterObject, test_time, test_injected_lc, test_flux_err, mstar.value, rstar.value,
-		periods=test_periods,radii=test_radii,N=N,show_plots=False)
+		smart_search=True,smart_search_Nbins=20, smart_search_Nperbin=20, periods=test_periods,radii=test_radii,N=N,show_plots=False,raw_flux=False, radius_min=1, radius_max=10,period_max=100)
 	#test_recover = TransitFitter._recover_(TransitFitterObject, test_time, test_injected_lc, test_flux_err, test_t0, test_per, ground_truth,
 	#			      raw_flux=False)
 	#print("    Test injection/recovery done.\n")
