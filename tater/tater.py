@@ -284,8 +284,8 @@ class TransitFitter(object):
 
     def find_planets(self, time=None, flux=None, flux_err=None,
         max_iterations=7, tce_threshold=8.0,
-        period_min=0.5, period_max=100, show_plots=False, save_results=True):
-        """Function to identify transits using TLS, then perform model fit with MCMC
+        period_min=0.5, period_max=100, show_plots=False):
+        """Function to identify transits using TLS
 
         @param time: time array
         @type time: numpy array (optional; default=None)
@@ -311,9 +311,6 @@ class TransitFitter(object):
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
 
-        @param save_results: save results of fit
-        @type save_results: bool (optional; default=True)
-
         @return self.planet_candidates: list of planet candidates
 
         """
@@ -336,8 +333,6 @@ class TransitFitter(object):
         ###### END TEST INJECTION AND RECOVERY ##################
         """
 
-
-
         TCEs,_ = self._tls_search_(max_iterations, tce_threshold,
                                  time=time, flux=flux, flux_err=flux_err,
                                  period_min=period_min, period_max=period_max,
@@ -352,7 +347,33 @@ class TransitFitter(object):
         if not len(TCEs) >= 1:
             raise ValueError("No TCEs were found.")
 
+        return self.TCEs
+
+    def run_mcmc(self, time=None, flux=None, flux_err=None,
+        show_plots=False, save_results=True):
+        """Function to perform model fit with MCMC
+
+        @param time: time array
+        @type time: numpy array (optional; default=None)
+
+        @param flux: flux array
+        @type flux: numpy array (optional; default=None)
+
+        @param flux_err: flux uncertainty array
+        @type flux_err: numpy array (optional; default=None)
+
+        @param show_plots: show plots of periodogram and best TLS model
+        @type show_plots: bool (optional; default=False)
+
+        @param save_results: save results of fit
+        @type save_results: bool (optional; default=True)
+
+        @return self.planet_candidates: list of planet candidates
+
+        """
+
         # do MCMC fit for each planet in candidate list
+        TCEs = self.TCEs
         for i, TCE in enumerate(TCEs):
 
             print("   Running MCMC for TCE with $P = {:.6f}$ days (SDE={:.6f})".format(TCE.period, TCE.SDE))
@@ -408,8 +429,13 @@ class TransitFitter(object):
                 print("   MCMC COMPLETE.")
                 print(" ")
 
-        return self.TCEs
+            #Save .csv containing transit fit parameters
+            tic_no = self.tic_id[4:]
+            output_base = "{}/tater_report_{}_0{}.pdf".format(save_to_path, tic_no, i + 1)
+            mcmcoutfile = output_base+'_mcmc_results.csv'
+            planet_fits.to_csv(mcmoutfile,index=False)
 
+        return self.TCEs
 
     def vet_TCEs(self, save_results=True):
         """Function to perform vetting of TCEs (to promote to candidate)

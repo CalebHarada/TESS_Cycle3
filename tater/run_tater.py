@@ -52,8 +52,13 @@ for i,tic_id in enumerate(tic_ids):
 			tce_threshold=8.0,  # Minimum SDE that counts as a TCE (default: 8.0)
 			period_min=0.8, # Minimum TLS period to explore
 			show_plots=False,  # option to show periodogram and transit model (default: false)
-			save_results = True  # save all results to PDF/txt files (default: true)
 			)
+
+		#Run MCMC fits
+		planets = transit_fitter.find_planets(
+				show_plots=False,  # option to show periodogram and transit model (default: false)
+				save_results = True  # save all results to PDF/txt files (default: true)
+					)
 
 		if len(transit_fitter.TCEs) >= 1:
 			# do vetting
