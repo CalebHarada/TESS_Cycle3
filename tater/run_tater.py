@@ -4,7 +4,8 @@ matplotlib.use('agg')
 import sys
 import tater
 
-inject_recover = True
+inject_recover = False
+verbose = False
 
 # choose a planet
 #tic_ids = [43647325]  # WASP-35 b
@@ -33,11 +34,15 @@ for i,tic_id in enumerate(tic_ids):
 		)
 
 	# download data and show plot
-	transit_fitter.download_data(
+	nsec_found = transit_fitter.download_data(
 		window_size=3.0,
 		#n_sectors=1,  # number of TESS sectors to load (default: all)
 		show_plot=False  # option to show light curve (default: false)
 		)
+
+	if nsec_found == 0:
+		if verbose == True:
+			print('No sectors of data found for TIC'+str(tic_id)+'. Skipping to next target.')
 
 	# search for planets and save results
 	if not inject_recover:
@@ -49,7 +54,7 @@ for i,tic_id in enumerate(tic_ids):
 			show_plots=False,  # option to show periodogram and transit model (default: false)
 			save_results = True  # save all results to PDF/txt files (default: true)
 			)
-		
+
 		if len(transit_fitter.TCEs) >= 1:
 			# do vetting
 			transit_fitter.vet_TCEs(
@@ -67,4 +72,3 @@ for i,tic_id in enumerate(tic_ids):
 			N=50, # number of injections (default: 25)
 			raw_flux=True # option to inject signal before or after flattening (default: True)
 			)
-

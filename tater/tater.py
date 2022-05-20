@@ -32,6 +32,9 @@ from astroquery.mast import Catalogs
 from astroquery.vizier import Vizier
 from wotan import flatten
 from tqdm import tqdm
+import pandas as pd
+from os.path import exists
+
 
 # [...]
 
@@ -122,7 +125,7 @@ class TransitFitter(object):
 
         self.injection_recovery_results = None
 
-    def download_data(self, window_size=3.0, n_sectors=None, show_plot=False):
+    def download_data(self, window_size=3.0, n_sectors=None, show_plot=False, save_lc=True):
         """Function to download data with Lightkurve and flatten raw light curve
 
         @param window_size: median smoothing filter window size in days
@@ -141,12 +144,20 @@ class TransitFitter(object):
         # download SPOC data from all sectors at 120s exp time
         print("   acquiring TESS data...")
         search_result = search_lightcurve(self.tic_id, mission="TESS", author="SPOC", exptime=120)
+        #Catch case where no data are nsec_foundif nsec_found == 0:
+        if len(search_result) == 0:
+            return 0
+
         # in rare cases (e.g. TIC 96246348), the wrong targets are included in search output
         if sum(search_result.target_name.data != self.tic_id[len('TIC '):]) > 0:
                 print("Additional targets found by lightkurve")
                 print(search_result)
                 print("Removing additional targets")
                 search_result = search_result[np.where(search_result.target_name.data == self.tic_id[len('TIC '):])]
+                if len(search_result) == 0:
+                    return 0
+        nsec_found = len(search_result)
+
         self.lc = search_result.download_all(quality_bitmask="default")
         self.time_raw, self.f_raw, self.ferr_raw = np.concatenate([(sector.remove_nans().time.value,
                                                                     sector.remove_nans().flux.value,
@@ -207,11 +218,72 @@ class TransitFitter(object):
 
         print("   done.")
 
-        return None
+        return nsec_found
+
+    def use_local_data(self, ddir = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/', show_plot=False):
+            """Function to load local lightcurve data
+
+            @param show_plot: show plot of raw and flattened LC
+            @type show_plot: bool (optional; default=False)
+
+            @return None
+
+            """
+
+            # load lightcurve
+            ticnumber = self.tic_id[4:]
+            lcfile = ddir + str(ticnumber)+'_lightcurve_detrended.csv'
+            print('looking for file ', lcfile)
+            if not exists(lcfile):
+                print('no file found for '+str(self.tic_id))
+                return 0 #0 = no sectors of data found
+            lc = pd.read_csv(lcfile)
+
+            #Load ld_values
+            #Converting to np arrays is important because otherwise
+            #they will be loaded as series and the indexing won't work
+            #properly when masking transits during TLS search
+            self.time_raw = np.array(lc.time)
+            self.time = np.array(lc.time)
+            self.f_raw = np.array(lc.initial_flux)
+            self.ferr_raw = np.array(lc.err)
+            self.f_err = np.array(lc.err)
+            self.flux = np.array(lc.flux)
+            self.f = np.array(lc.flux)
+            self.trend = np.array(lc.trend)
+
+            #Make lightcurve figures
+            fig, axes = plt.subplots(2, 1,
+                                    figsize=(10, 8),
+                                    sharex=True,
+                                    gridspec_kw=dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
+                                    )
+            axes[0].set_title(self.tic_id)
+            axes[0].set_ylabel("Flux")
+            axes[1].set_xlabel("Time (days)")
+            axes[1].set_ylabel("Relativeflux ")
+
+            # plot data, trend, and flattened lc
+            axes[0].scatter(self.time, self.f_raw, c='k', s=1, alpha=0.2, rasterized=True)
+            axes[0].plot(self.time, self.trend, "b-", lw=2)
+            axes[1].scatter(self.time, self.flux, c='k', s=1, alpha=0.2, rasterized=True)
+
+            # show plot if option is true
+            if show_plot:
+                plt.ion(), plt.show(), plt.pause(0.001)
+
+            # save & close figure
+            self.lc_figure = fig
+            plt.close()
+
+            print("   done.")
 
 
-    def find_planets(self, time=None, flux=None, flux_err=None, 
-        max_iterations=7, tce_threshold=8.0, 
+            return 999 #just don't return 0
+
+
+    def find_planets(self, time=None, flux=None, flux_err=None,
+        max_iterations=7, tce_threshold=8.0,
         period_min=0.5, period_max=100, show_plots=False, save_results=True):
         """Function to identify transits using TLS, then perform model fit with MCMC
 
@@ -266,9 +338,9 @@ class TransitFitter(object):
 
 
 
-        TCEs,_ = self._tls_search_(max_iterations, tce_threshold, 
+        TCEs,_ = self._tls_search_(max_iterations, tce_threshold,
                                  time=time, flux=flux, flux_err=flux_err,
-                                 period_min=period_min, period_max=period_max, 
+                                 period_min=period_min, period_max=period_max,
                                  show_plots=True) if show_plots \
             else self._tls_search_(max_iterations, tce_threshold,
                                    time=time, flux=flux, flux_err=flux_err,
@@ -525,9 +597,9 @@ class TransitFitter(object):
         return None
 
 
-    def _tls_search_(self, max_iterations, tce_threshold, 
+    def _tls_search_(self, max_iterations, tce_threshold,
         time=None, flux=None, flux_err=None, mask=None,
-        period_min=0.5, period_max=100, 
+        period_min=0.5, period_max=100,
         make_plots=True, show_plots=False):
         """Helper function to run TLS search for transits in light curve
 
@@ -593,6 +665,7 @@ class TransitFitter(object):
 
             # clean arrays for TLS, masking out out-of-transit flux
             new_time, new_flux, new_flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
+            print('just applied mask')
             # leave loop if previous TLS iterations have completely masked all data
             if len(time) == 0:
                 break
@@ -639,26 +712,26 @@ class TransitFitter(object):
                 ax1.set_xlabel("period (days)")
                 ax1.set_ylabel("power")
                 ax1.set_title("Peak at {:.4f} days (SDE = {:.4f})".format(tls_results.period, tls_results.SDE))
-    
+
                 # label TCE threshold, best period
                 ax1.axhline(tce_threshold, ls="--", c="r", alpha=0.6)
                 ax1.axvline(tls_results.period, alpha=0.2, lw=6, c="b")
-    
+
                 # label alias periods
                 for j in range(2, 15):
                     ax1.axvline(tls_results.period * j, alpha=0.2, lw=1, c="b", ls='--')
                     ax1.axvline(tls_results.period / j, alpha=0.2, lw=1, c="b", ls='--')
-    
+
                 # plot periodogram
                 ax1.plot(tls_results.periods, tls_results.power, 'k-', lw=1)
-    
+
                 # initialize TLS transit model figure
                 fig2, ax2 = plt.subplots(1, 1, figsize=(12, 8))
                 ax2.set_title("TLS transit model (preliminary)")
                 ax2.set_xlim([-tls_results.duration*24, tls_results.duration*24])
                 ax2.set_xlabel("phase (hrs)")
                 ax2.set_ylabel("relative flux")
-    
+
                 # create a batman model using the initial TLS parameters
                 tls_model = self._model_single_transit_(t=new_time,
                                                         t0=tls_results.T0,
@@ -666,32 +739,34 @@ class TransitFitter(object):
                                                         rp=tls_results.rp_rs,
                                                         a=self._P_to_a_(tls_results.period)
                                                         )
-    
+
                 # fold model and data
                 phase = (new_time - tls_results.T0 + 0.5 * tls_results.period) % tls_results.period - 0.5 * tls_results.period
                 tls_model = tls_model[np.argsort(phase)]
                 f_fold = new_flux[np.argsort(phase)]
                 phase = np.sort(phase)
-    
+
                 # plot folded data and TLS transit model
                 ax2.scatter(phase * 24, f_fold, s=1, c='k', rasterized=True)
                 ax2.plot(phase * 24, tls_model, "b-", lw=3)
-    
+
                 # option to show plots
                 if show_plots:
                     plt.ion(), plt.show(), plt.pause(0.001)
-    
+
                 # add "False Positive" keyword + plots to tls_results object
                 tls_results.periodogram_fig = fig1
                 tls_results.model_fig = fig2
                 tls_results.FP = "No"
-    
+
                 plt.close()
 
             # mask the detected transit signal before next iteration of TLS
             # length of mask is 2.5 x the transit duration
             intransit += transit_mask(time, tls_results.period, 2.5 * tls_results.duration, tls_results.T0)
-
+            print('set intransit')
+            print('len(intransit)', len(intransit))
+            print('intransit.dtype', intransit.dtype)
             # make planet vetting figures
             # self._generate_vet_figures_(tls_results)
 
@@ -1281,7 +1356,7 @@ class TransitFitter(object):
         return None
 
 
-    def _model_single_transit_(self, t, t0, per, rp, a, 
+    def _model_single_transit_(self, t, t0, per, rp, a,
         inc=90., baseline=1., q1=None, q2=None):
         """Helper function to generate a single batman transit model
 
@@ -1463,7 +1538,7 @@ class TransitFitter(object):
 
         @param limits: upper and lower bounds on allowed user input
         @type limits: tuple (optional; default=None)
-        
+
         @return response
 
         """
@@ -2147,7 +2222,7 @@ class TransitFitter(object):
         @return: initialized light curve with injected planet signal, model light curve
         """
 
-        lc = self._model_single_transit_(time, t0, per, rp, a, 
+        lc = self._model_single_transit_(time, t0, per, rp, a,
             inc=inc, baseline=baseline, q1=q1, q2=q2)
 
         return np.array(flux * lc), lc
@@ -2301,7 +2376,7 @@ class TransitFitter(object):
         @param rstar: stellar radius (Solar radii)
         @type mstar: float
 
-        @smart_search: 
+        @smart_search:
 
         baseline_min: flux baseline minimum
         baseline_max: flux baseline maximum
@@ -2418,7 +2493,7 @@ class TransitFitter(object):
             if t0_min is None:
                 t0_min = min(time)
             if t0_max is None:
-                t0_max = max(time)	
+                t0_max = max(time)
             t0s = np.random.uniform(t0_min,t0_max,N)
 
         # pick and explore all periods and radii at once
@@ -2433,16 +2508,16 @@ class TransitFitter(object):
             else:
                 radii = np.random.uniform(radius_min,radius_max,N)/\
                     (rsun_to_rearth*rstar)
-    
+
             # calculate remaining needed parameters
             ars = calc_ars(mstar,periods,rstar)
             asinis = np.sqrt(ars**2 - bs**2)
             incs = list(map(calc_inc,bs,asinis))
-    
+
             # assemble parameters into single array
             thetas = np.array((baselines,q1s,q2s,
                 t0s,periods,radii,ars,incs)).T
-    
+
             # helper function to map onto in order to perform injection/recovery
             def helper(theta,time=time,flux=flux,flux_err=flux_err):
                 baseline,q1,q2,t0,per,rp,ars,inc = theta
@@ -2452,7 +2527,7 @@ class TransitFitter(object):
                     t0_tolerance, max_iterations, tce_threshold, show_plots,
                     raw_flux, window_size)
             results = list(map(helper,thetas))
-    
+
             # save output in object and return
             self.injection_recovery_results = [thetas,results]
 
@@ -2523,7 +2598,7 @@ class TransitFitter(object):
                         norm_med_est = (upper_1sigma_est+lower_1sigma_est)/2 # average provides estimate of boundary center
                         norm_std_est = abs(upper_1sigma_est-lower_1sigma_est)/2 # half the difference provides estimats of boundary std dev width
                         print('1')
-    
+
                         # draw next radius to explore from estimated normal dist (truncated at radius_min and radius_max
                         radius = np.random.normal(loc=norm_med_est,scale=norm_std_est)
                         count = 0
@@ -2534,7 +2609,7 @@ class TransitFitter(object):
                             print('2')
                             print(norm_med_est,norm_std_est)
                             radius = np.random.normal(loc=norm_med_est,scale=norm_std_est)
-    
+
                         # draw a new random period as well
                         per = np.random.uniform(period_bin_min,period_bin_max)
                         print('3')
