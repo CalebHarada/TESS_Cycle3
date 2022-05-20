@@ -1,4 +1,4 @@
-""" Script to run tater """
+""" Script to run tater using local lightcurves"""
 import matplotlib
 matplotlib.use('agg')
 import sys
@@ -33,16 +33,15 @@ for i,tic_id in enumerate(tic_ids):
 		assume_solar=True # fill in solar values if not found on MAST (default: false)
 		)
 
-	# download data and show plot
-	nsec_found = transit_fitter.download_data(
-		window_size=3.0,
-		#n_sectors=1,  # number of TESS sectors to load (default: all)
-		show_plot=False  # option to show light curve (default: false)
-		)
+	# load data
+	nsec_found = transit_fitter.use_local_data(
+			)
 
 	if nsec_found == 0:
 		if verbose == True:
 			print('No sectors of data found for TIC'+str(tic_id)+'. Skipping to next target.')
+		continue
+
 
 	# search for planets and save results
 	if not inject_recover:
