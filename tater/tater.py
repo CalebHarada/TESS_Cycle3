@@ -665,7 +665,6 @@ class TransitFitter(object):
 
             # clean arrays for TLS, masking out out-of-transit flux
             new_time, new_flux, new_flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
-            print('just applied mask')
             # leave loop if previous TLS iterations have completely masked all data
             if len(time) == 0:
                 break
@@ -764,9 +763,7 @@ class TransitFitter(object):
             # mask the detected transit signal before next iteration of TLS
             # length of mask is 2.5 x the transit duration
             intransit += transit_mask(time, tls_results.period, 2.5 * tls_results.duration, tls_results.T0)
-            print('set intransit')
-            print('len(intransit)', len(intransit))
-            print('intransit.dtype', intransit.dtype)
+
             # make planet vetting figures
             # self._generate_vet_figures_(tls_results)
 
