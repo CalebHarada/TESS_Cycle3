@@ -13,7 +13,7 @@ from os.path import exists
 verbose = True
 
 #Directories & Files
-tfile = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/triceratops_inputs.csv'
+tfile = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/targets_exofop_toi_properties.csv'
 taterdir = '/Users/courtney/Documents/GitHub/TESS_Cycle3/tater/'
 
 #Read list of TOIs in paper

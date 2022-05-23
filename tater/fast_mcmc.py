@@ -16,24 +16,42 @@ verbose = True
 show_plots = False
 
 #Directories & Files
-tfile = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/triceratops_inputs.csv'
+tfile = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/targets_exofop_toi_properties.csv'
 taterdir = '/Users/courtney/Documents/GitHub/TESS_Cycle3/tater/'
 outdir = '/Users/courtney/Documents/data/toi_paper_data/tater_mcmc_fits/'
+
+def trim_to_transits(lc, toi,nfactor=3.):
+    #Trim down to just flux near transit
+    t0 = toi.exofop_t0
+    period = toi.exofop_per
+    dur = toi.exofop_duration
+    tdiff = np.mod(lc.time - t0-(period/2.), period)-period/2.
+    wnear = np.where(np.abs(tdiff) < (dur*nfactor))
+    lc = lc.iloc[wnear]
+    return lc
 
 #Read list of TOIs in paper
 tois = pd.read_csv(tfile)
 
 #Change column names
-tois['per'] = tois.triceratops_per
-tois['T0'] = tois.triceratops_t0
-tois['rp_rs']= np.sqrt(tois.triceratops_depth)
+tois['per'] = tois.exofop_per
+tois['T0'] = tois.exofop_t0
+tois['rp_rs']= np.sqrt(tois.exofop_depth)
 
 #Loop through all TOIs! :)
 for ii in np.arange(len(tois)):
     toi = tois.iloc[ii]
     tic_id = int(toi.TIC)
 
-    print('Fitting TOI ', toi.TIC, '(TIC '+str(tic_id)+')')
+    print(ii, 'Fitting TOI ', toi.TIC, '(TIC '+str(tic_id)+')')
+
+#   #continue progress
+    if ii < 0:
+        continue
+
+    if tic_id == 355867695: #temporary workaround
+        print('skipping TIC 355867695')
+        continue
 
     # initialize TATER class
     transit_fitter = tater.TransitFitter(
@@ -72,9 +90,14 @@ for ii in np.arange(len(tois)):
     #intransit = np.zeros(len(self.time_raw), dtype=bool)
     #time, flux, flux_err = transit_fitter._get_intransit_flux_(TCE, msk=intransit)
 
-    time = transit_fitter.time
-    flux = transit_fitter.f
-    flux_err = transit_fitter.f_err
+    #Trim down to just flux near transit
+    lc = pd.DataFrame({'time': transit_fitter.time,
+        'flux': transit_fitter.f,
+        'err': transit_fitter.f_err,})
+    lc = trim_to_transits(lc, toi)
+    time = np.array(lc.time)
+    flux = np.array(lc.flux)
+    flux_err = np.array(lc.err)
 
 
     # run the MCMC (option to show plots)

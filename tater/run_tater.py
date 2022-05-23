@@ -55,10 +55,10 @@ for i,tic_id in enumerate(tic_ids):
 			)
 
 		#Run MCMC fits
-		planets = transit_fitter.find_planets(
+		planets = transit_fitter.run_mcmc(
 				show_plots=False,  # option to show periodogram and transit model (default: false)
 				save_results = True  # save all results to PDF/txt files (default: true)
-					)
+				)
 
 		if len(transit_fitter.TCEs) >= 1:
 			# do vetting

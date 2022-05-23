@@ -431,9 +431,10 @@ class TransitFitter(object):
 
             #Save .csv containing transit fit parameters
             tic_no = self.tic_id[4:]
+            save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
             output_base = "{}/tater_report_{}_0{}.pdf".format(save_to_path, tic_no, i + 1)
             mcmcoutfile = output_base+'_mcmc_results.csv'
-            planet_fits.to_csv(mcmoutfile,index=False)
+            planet_fit.to_csv(mcmcoutfile,index=False)
 
         return self.TCEs
 
@@ -1038,6 +1039,8 @@ class TransitFitter(object):
                 time_fold_odd = np.array([item for sublist in tfold_odd for item in sublist])
                 flux_fold_odd = flux_fold_odd[np.argsort(time_fold_odd)]
                 time_fold_odd = np.sort(time_fold_odd)
+
+
                 ax.errorbar(*self._resample_(time_fold_odd * 24, flux_fold_odd),
                             fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
 
@@ -1886,6 +1889,14 @@ class TransitFitter(object):
 
         # get bin centers
         bin_centers = bin_edges[1:] - bin_width / 2
+
+        #Get rid of nans
+        wg = np.where(np.isnan(bin_means) == False)
+        bin_centers = bin_centers[wg]
+        bin_means = bin_means[wg]
+        bin_stds = bin_stds[wg]
+        bin_counts = bin_counts[wg]
+        bin_width = bin_width #[wg] constant bin widths, so bex is a scalar
 
         return bin_centers, bin_means, bin_stds / np.sqrt(bin_counts), bin_width / 2
 
