@@ -120,7 +120,7 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 100
-        self.nsteps = 350
+        self.nsteps = 1000 #350
         self.nburn = 250
 
         self.injection_recovery_results = None
@@ -1694,7 +1694,7 @@ class TransitFitter(object):
 
         # set uniform priors
         if (theta_0["per"] - 0.1 < per < theta_0["per"] + 0.1) \
-                and (theta_0["t0"] - 0.083 < t0 < theta_0["t0"] + 0.083) \
+                and (theta_0["t0"] - 0.1 < t0 < theta_0["t0"] + 0.1) \
                 and (0.0 < rp < 0.3) \
                 and (max(1, 0.5 * theta_0["a_rs"]) < a < 10.0 * theta_0["a_rs"]) \
                 and (0.0 < b < 1.0):
