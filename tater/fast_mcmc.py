@@ -41,10 +41,15 @@ tois['rp_rs']= np.sqrt(tois.exofop_depth)
 
 #Loop through all TOIs! :)
 for ii in np.arange(len(tois)):
+#for ii in [3]:
     toi = tois.iloc[ii]
     tic_id = int(toi.TIC)
 
     print(ii, 'Fitting TOI ', toi.TIC, '(TIC '+str(tic_id)+')')
+
+    #Set output file base
+    outbase = outdir+str(tic_id)+'_'+str(int(toi.TOI*100))
+    print('   ', outbase)
 
 #   #continue progress
     if ii < 0:
@@ -92,9 +97,9 @@ for ii in np.arange(len(tois)):
 
     # run the MCMC (option to show plots)
     planet_fit, walker_fig, corner_fig, best_fig, best_full_fig = transit_fitter._execute_mcmc_(
-        theta_0, time, flux, flux_err, show_plots=show_plots)
+        theta_0, time, flux, flux_err, show_plots=show_plots, outbase=outbase)
 
-    planet_fit.to_csv(outdir+str(tic_id)+'_'+str(int(toi.TOI*100))+'_planet_fit.csv')
+    planet_fit.to_csv(outbase+'_planet_fit.csv')
     print(planet_fit)
 
     # save figures to candidate object dictionary
@@ -107,7 +112,7 @@ for ii in np.arange(len(tois)):
     plt.close()
 
     # use PdfPages to make a new PDF document
-    with PdfPages(outdir+str(tic_id)+'_'+str(int(toi.TOI*100))+'_planet_fit.pdf') as pdf:
+    with PdfPages(outbase+'_planet_fit.pdf') as pdf:
 
         # save all the figures to the PDF
         if transit_fitter.corner_fig is not None:

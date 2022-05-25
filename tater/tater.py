@@ -120,8 +120,9 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 100
-        self.nsteps = 2000 #350
-        self.nburn = 500
+        self.nsteps = 20000 #maximum number of steps allowed
+        self.nsteps_used = 20000 #number of steps actually used when emcee finished
+        self.nburn = 5000
 
         self.injection_recovery_results = None
 
@@ -1810,7 +1811,7 @@ class TransitFitter(object):
 
         return log_prob
 
-    def _execute_mcmc_(self, theta_0, t, f, f_err, show_plots=False):
+    def _execute_mcmc_(self, theta_0, t, f, f_err, show_plots=False, outbase='tater'):
         """Helper function to run MCMC
 
         @param theta_0: parameter vector (period, t0, rp, a, b)
@@ -1828,6 +1829,9 @@ class TransitFitter(object):
         @param show_plots: show MCMC plots
         @type show_plots: bool (optional; default=False)
 
+        @param outbase: path to save .h5 file containing mcmc results. Default is for files to be saved in working directory with the prefix 'tater'
+        @type outbase: string (optional; default='tater')
+
         @return results_df, walker_fig, corner_fig, best_fig, best_full_fig
 
         """
@@ -1838,17 +1842,58 @@ class TransitFitter(object):
         pos = np.array([theta_0["per"], theta_0["t0"], theta_0["rp_rs"], theta_0["a_rs"], theta_0["b"]]) \
               + 5e-5 * np.random.randn(self.nwalkers, self.ndim)
 
+        #Set up the backend.
+        filename = outbase+"_emcee_samples.h5"
+        backend = emcee.backends.HDFBackend(filename)
+        backend.reset(self.nwalkers, self.ndim)
+        #Clear it in case the file already exists
+
         # initialize sampler
         sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self._log_probability_,
-                                        args=(theta_0, t, f, f_err)
+                                        args=(theta_0, t, f, f_err),
+                                        backend=backend
                                         )
 
-        # run the MCMC
-        sampler.run_mcmc(pos, self.nsteps, progress=True)
+        # We'll track how the average autocorrelation time estimate changes
+        index = 0
+        autocorr = np.empty(self.nsteps)
 
-        # grab the chain
-        flat_samples = sampler.get_chain(discard=self.nburn, flat=True)
+        # This will be useful to testing convergence
+        old_tau = np.inf
+
+        # Now we'll sample for up to self.nsteps steps
+        for sample in sampler.sample(pos, iterations=self.nsteps, progress=True):
+            # Only check convergence every 100 steps
+            if sampler.iteration % 100:
+                continue
+
+            # Compute the autocorrelation time so far
+            # Using tol=0 means that we'll always get an estimate even
+            # if it isn't trustworthy
+            tau = sampler.get_autocorr_time(tol=0)
+            autocorr[index] = np.mean(tau)
+            index += 1
+
+            # Check convergence
+            converged = np.all(tau * 100 < sampler.iteration)
+            converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+            if converged:
+                break
+            old_tau = tau
+
+    #    # run the MCMC
+    #    sampler.run_mcmc(pos, self.nsteps, progress=True)
+
+        #Get chain and determine length
         samples = sampler.get_chain()
+        self.nsteps_used = sampler.iteration
+
+        # get flattened chain
+
+        nburn = int(np.floor((sampler.iteration)/2))
+        self.nburn = nburn
+        flat_samples = sampler.get_chain(discard=nburn, flat=True)
+
 
         # generate plots (option to display plots)
         if show_plots:
