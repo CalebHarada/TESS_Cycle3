@@ -31,73 +31,6 @@ def trim_to_transits(lc, toi,nfactor=3.):
     return lc
 
 
-def renorm_flux(lc, toi):
-    """Helper function to extract and re-normalize in-transit flux
-    to save compute time for MCMC fit. Nearly identical to Caleb's _get_intransit_flux_
-
-    @param tce_dict: TCE results dictionary
-    @type tce_dict: dict
-
-
-    @return new_t, new_f, new_ferr: normalized in-transit time, flux, and uncert
-
-    #CDD TO DO: Compute transit times. Change from self to lc.
-
-    """
-
-    # get the individual transit times and transit duration to create mask
-
-    #CDD DO NEXT
-    transit_times = tce_dict.transit_times #REPLACE WITH: Find transit times from period, t0, and lc time stamps
-    #END CDD DO NEXT
-    duration = toi.exofop_duration
-
-    # linear function we will use to re-normalize the flux
-    linear_func = lambda x, m, b: m * x + b
-
-    # initialize new arrays for time, flux and uncert
-    new_t = np.array([])
-    new_f = np.array([])
-    new_ferr = np.array([])
-
-    # create previous transit mask if none provided
-    if len(msk) == 0:
-        msk = np.zeros(len(self.time_raw), dtype=bool)
-
-    # normalize each transit individually
-    for t0 in transit_times:
-
-        # consider data within 3 x the transit duration of the central transit time
-        transit_msk = (self.time_raw[~msk] > t0 - 3 * duration) & (self.time_raw[~msk] < t0 + 3 * duration)
-
-        # we will normalize by the out-of-transit flux between
-        # 3x and 1.5x the transit duration away from the central transit time
-        pre_msk = (self.time_raw[~msk] > t0 - 3 * duration) & (self.time_raw[~msk] < t0 - 1.5 * duration)
-        post_msk = (self.time_raw[~msk] < t0 + 3 * duration) & (self.time_raw[~msk] > t0 + 1.5 * duration)
-        trend_msk = pre_msk | post_msk
-
-        # require at least N_min data points during, before, and after transit
-        cadence = 2. / 1440   # 2-min cadence
-        N_min_sides = 0.8 * (1.5 * duration / cadence)   # 80% complete data
-        N_min_total = 0.7 * (6 * duration / cadence)   # 70% complete data
-        if (np.sum(pre_msk) > N_min_sides) & (np.sum(post_msk) > N_min_sides) & (np.sum(transit_msk) > N_min_total):
-
-            # fit linear model ("trend") to out-of-transit data
-            slope, intercept, _, _, _ = linregress(self.time_raw[~msk][trend_msk], self.f_raw[~msk][trend_msk])
-            y_trend = linear_func(self.time_raw[~msk][transit_msk], slope, intercept)
-
-            # normalize the transit by the linear trend; save to array
-            new_f = np.concatenate((new_f, self.f_raw[~msk][transit_msk] / y_trend))
-
-            # save transit time and uncert arrays
-            new_t = np.concatenate((new_t, self.time_raw[~msk][transit_msk]))
-            new_ferr = np.concatenate((new_ferr, self.ferr_raw[~msk][transit_msk] / self.f_raw[~msk][transit_msk]))
-
-    # clean arrays
-    new_t, new_f, new_ferr = cleaned_array(new_t, new_f, new_ferr)
-
-    return new_t, new_f, new_ferr
-
 #Read list of TOIs in paper
 tois = pd.read_csv(tfile)
 
@@ -154,19 +87,8 @@ for ii in np.arange(len(tois)):
                    b=0.1
                    )
 
-    #Not currently masking out other planets in the system
-    #intransit = np.zeros(len(self.time_raw), dtype=bool)
-    #time, flux, flux_err = transit_fitter._get_intransit_flux_(TCE, msk=intransit)
-
-    #Trim down to just flux near transit
-    lc = pd.DataFrame({'time': transit_fitter.time,
-        'flux': transit_fitter.f,
-        'err': transit_fitter.f_err,})
-    lc = trim_to_transits(lc, toi)
-    time = np.array(lc.time)
-    flux = np.array(lc.flux)
-    flux_err = np.array(lc.err)
-
+    #Normalize each transit & trim lightcurve to near transit
+    time, flux, flux_err = transit_fitter._renorm_flux_(toi)
 
     # run the MCMC (option to show plots)
     planet_fit, walker_fig, corner_fig, best_fig, best_full_fig = transit_fitter._execute_mcmc_(

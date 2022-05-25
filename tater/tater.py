@@ -120,8 +120,8 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 100
-        self.nsteps = 1000 #350
-        self.nburn = 250
+        self.nsteps = 2000 #350
+        self.nburn = 500
 
         self.injection_recovery_results = None
 
@@ -233,6 +233,7 @@ class TransitFitter(object):
             # load lightcurve
             ticnumber = self.tic_id[4:]
             lcfile = ddir + str(ticnumber)+'_lightcurve_detrended.csv'
+
             print('looking for file ', lcfile)
             if not exists(lcfile):
                 print('no file found for '+str(self.tic_id))
@@ -799,7 +800,6 @@ class TransitFitter(object):
 
         return TCEs,intransit
 
-
     def _get_intransit_flux_(self, tce_dict, msk=[]):
         """Helper function to extract and re-normalize in-transit flux
         to save compute time for MCMC fit
@@ -810,8 +810,7 @@ class TransitFitter(object):
         @param msk: previous transit mask
         @type msk: array
 
-        @return new_t, new_f, new_ferr: normalized in-transit time, flux, and uncert
-
+        @return new_t, new_f, new_ferr: normalized in-transit time, flux, and uncertainty
         """
 
         # get the individual transit times and transit duration to create mask
@@ -864,6 +863,78 @@ class TransitFitter(object):
 
         return new_t, new_f, new_ferr
 
+    def _renorm_flux_(self, toi, msk=[], ndur=3.):
+        """Helper function to extract and re-normalize in-transit flux
+        to save compute time for MCMC fit. Nearly identical to Caleb's _get_intransit_flux_
+        but takes toi as input rather than tce_dict and doesn't assume 2-min cadence.
+
+        @param toi: TOI properties dataframe entry
+        @type toi: row from Pandas dataframe
+
+        @param ndur: number of durations to keep on either side of transit
+        @type ndur: float
+
+        @return new_t, new_f, new_ferr: normalized in-transit time, flux, and uncert
+
+        """
+
+        #Find transit properties
+        t0 = toi.T0
+        per = toi.per
+        duration = toi.exofop_duration
+
+        #Determine transit times
+        pbefore = np.ceil((np.min(self.time_raw) - t0)/per)
+        pafter = np.ceil((np.max(self.time_raw) - t0)/per)
+        transit_times = np.arange(pbefore, pafter)*per + t0
+
+        # linear function we will use to re-normalize the flux
+        linear_func = lambda x, m, b: m * x + b
+
+        # initialize new arrays for time, flux and uncert
+        new_t = np.array([])
+        new_f = np.array([])
+        new_ferr = np.array([])
+
+        # create previous transit mask if none provided
+        if len(msk) == 0:
+            msk = np.zeros(len(self.time_raw), dtype=bool)
+
+        # normalize each transit individually
+        for t0 in transit_times:
+
+            # consider data within 3 x the transit duration of the central transit time
+            transit_msk = (self.time_raw[~msk] > t0 - ndur * duration) & (self.time_raw[~msk] < t0 + ndur * duration)
+
+            # we will normalize by the out-of-transit flux between
+            # 3x and 1.5x the transit duration away from the central transit time
+            pre_msk = (self.time_raw[~msk] > t0 - ndur * duration) & (self.time_raw[~msk] < t0 - (ndur/2.) * duration)
+            post_msk = (self.time_raw[~msk] < t0 + ndur * duration) & (self.time_raw[~msk] > t0 + (ndur/2.) * duration)
+            trend_msk = pre_msk | post_msk
+
+            # require at least N_min data points during, before, and after transit
+
+            #Determine cadence of observations from minimum spacing of times
+            cadence = np.min(np.abs(self.time_raw - np.roll(self.time_raw,1)))
+            N_min_sides = 0.8 * (1.5 * duration / cadence)   # 80% complete data
+            N_min_total = 0.7 * (6 * duration / cadence)   # 70% complete data
+            if (np.sum(pre_msk) > N_min_sides) & (np.sum(post_msk) > N_min_sides) & (np.sum(transit_msk) > N_min_total):
+
+                # fit linear model ("trend") to out-of-transit data
+                slope, intercept, _, _, _ = linregress(self.time_raw[~msk][trend_msk], self.f_raw[~msk][trend_msk])
+                y_trend = linear_func(self.time_raw[~msk][transit_msk], slope, intercept)
+
+                # normalize the transit by the linear trend; save to array
+                new_f = np.concatenate((new_f, self.f_raw[~msk][transit_msk] / y_trend))
+
+                # save transit time and uncert arrays
+                new_t = np.concatenate((new_t, self.time_raw[~msk][transit_msk]))
+                new_ferr = np.concatenate((new_ferr, self.ferr_raw[~msk][transit_msk] / self.f_raw[~msk][transit_msk]))
+
+        # clean arrays
+        new_t, new_f, new_ferr = cleaned_array(new_t, new_f, new_ferr)
+
+        return new_t, new_f, new_ferr
 
     def _vet_previous_planets_(self, TCE_list):
         """Helper function to do previous planet check defined by Zink+2020
