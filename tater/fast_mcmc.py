@@ -30,7 +30,6 @@ def trim_to_transits(lc, toi,nfactor=3.):
     lc = lc.iloc[wnear]
     return lc
 
-
 #Read list of TOIs in paper
 tois = pd.read_csv(tfile)
 
@@ -38,6 +37,11 @@ tois = pd.read_csv(tfile)
 tois['per'] = tois.exofop_per
 tois['T0'] = tois.exofop_t0
 tois['rp_rs']= np.sqrt(tois.exofop_depth)
+
+#Fill in missing stellar parameters
+# solar logg is from Smalley et al. (2005)
+values = {"R_star": 1, "M_star": 1, "logg": 4.4374, "[Fe/H]": 0}
+tois = tois.fillna(value=values)
 
 #Loop through all TOIs! :)
 for ii in np.arange(len(tois)):
@@ -59,12 +63,19 @@ for ii in np.arange(len(tois)):
         print('skipping TIC 355867695')
         continue
 
+    #Stellar parameters
+    wantcol = ['Teff','logg','R_star',
+    'M_star','[Fe/H]']
+    stellar_params = toi[wantcol]
+
     # initialize TATER class
     transit_fitter = tater.TransitFitter(
         tic_id,
-        auto_params=True,  # automatically find stellar params on MAST  (default: false)
+        auto_params=False,  # automatically find stellar params on MAST  (default: false)
         ask_user=False, # do not ask user for input (default: false)
-        assume_solar=True # fill in solar values if not found on MAST (default: false)
+        assume_solar=False, # fill in solar values if not found on MAST (default: false)
+        preloaded_stellar_params=True, #stellar parameters already downloaded
+        stellar_params=stellar_params #dataframe containing stellar parameters
         )
 
     # load data
@@ -94,6 +105,10 @@ for ii in np.arange(len(tois)):
 
     #Normalize each transit & trim lightcurve to near transit
     time, flux, flux_err = transit_fitter._renorm_flux_(toi)
+
+    #Save the trimmed and renormalized lightcurve used by TATER
+    tlc = pd.DataFrame({'time': time, 'flux': flux, 'error': flux_err})
+    tlc.to_csv(outbase+'_trimmed_lc.csv',index=False)
 
     # run the MCMC (option to show plots)
     planet_fit, walker_fig, corner_fig, best_fig, best_full_fig = transit_fitter._execute_mcmc_(

@@ -60,7 +60,7 @@ plt.rcParams.update({'figure.max_open_warning': 0})
 class TransitFitter(object):
     """Main class for TATER"""
 
-    def __init__(self, tic_id, auto_params=False, ask_user=False, assume_solar=False):
+    def __init__(self, tic_id, auto_params=False, ask_user=False, assume_solar=False, preloaded_stellar_params=False,stellar_params=None):
         """Initialization
 
         @param tic_id: TIC ID number
@@ -74,7 +74,14 @@ class TransitFitter(object):
 
         @param assume_solar: fill in solar estimates for missing MAST values (ignored if auto_params=False or ask_user=True)
         @type assume_solar: bool (default=False)
+
+        @param preloaded_stellar_params: stellar parameters already downloaded and saved to file
+        @type preloaded_stellar_params: bool (default=False)
+
+        @param stellar_params: Pandas data frame containing stellar parameters
+        @type stellar_param_file: Pandas DataFrame
         """
+
 
         # check user input
         if (not isinstance(tic_id, int)) | (tic_id <= 0):
@@ -97,6 +104,16 @@ class TransitFitter(object):
         self.Fe_H = None
         self.u1 = None
         self.u2 = None
+
+        if preloaded_stellar_params == True:
+            self.R_star = stellar_params.R_star*u.R_sun
+            self.M_star = stellar_params.M_star*u.M_sun
+            self.logg = stellar_params.logg
+            self.Teff = stellar_params.Teff
+            self.Fe_H = stellar_params['[Fe/H]']
+
+            #Get u1, u2 from other parameters
+            self._get_limb_darkening_params_()
 
         # option to automatically get stellar params from MAST
         self.missing = []
@@ -1517,12 +1534,25 @@ class TransitFitter(object):
 
         return lc
 
+    def _get_limb_darkening_params_(self):
+        """Helper function that interpolates LD coeffs from table
+        LD source: https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
+        """
+        Vizier.ROW_LIMIT = -1
+        ld_table = Vizier.get_catalogs("J/A+A/600/A30/table25")[0]
+        ld_table = ld_table[ld_table["xi"] == 2.0]
+        ld_points = np.array([ld_table["logg"], ld_table["Teff"], ld_table["Z"]]).T
+        ld_values = np.array([ld_table["aLSM"], ld_table["bLSM"]]).T
+        ld_interpolator = LinearNDInterpolator(ld_points, ld_values)
+        self.u1, self.u2 = ld_interpolator(self.logg, self.Teff, self.Fe_H)
+
+        return
+
 
     def _get_stellar_params_(self, ask_user=False, assume_solar=False):
         """Helper function that loads stellar parameters from MAST and interpolates LD coeffs from table
         If no parameter found, asks user for input (unless ask_user=False, then function skips)
         If no parameter found and ask_user=False, solar values can be assumed (only if assume_solar=True)
-        LD source: https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
 
         @param ask_user: ask user to input info missing from MAST
         @type ask_user: bool (default=False)
@@ -1595,15 +1625,8 @@ class TransitFitter(object):
                 print("   Solar value of 'Fe_H' used instead: 0.")
                 self.Fe_H = 0.
 
-        # interpolate limb darkening coefficients
-        # LD table from https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
-        Vizier.ROW_LIMIT = -1
-        ld_table = Vizier.get_catalogs("J/A+A/600/A30/table25")[0]
-        ld_table = ld_table[ld_table["xi"] == 2.0]
-        ld_points = np.array([ld_table["logg"], ld_table["Teff"], ld_table["Z"]]).T
-        ld_values = np.array([ld_table["aLSM"], ld_table["bLSM"]]).T
-        ld_interpolator = LinearNDInterpolator(ld_points, ld_values)
-        self.u1, self.u2 = ld_interpolator(self.logg, self.Teff, self.Fe_H)
+        # limb _get_limb_darkening_params
+        self._get_limb_darkening_params_()
 
         # print stellar info
         self.star_info = dict(zip(
