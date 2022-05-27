@@ -68,6 +68,11 @@ for ii in np.arange(len(tois)):
     'M_star','[Fe/H]']
     stellar_params = toi[wantcol]
 
+    #CDD debugging
+    print('stellar parameters from exofop')
+    print(stellar_params)
+    #end CDD
+
     # initialize TATER class
     transit_fitter = tater.TransitFitter(
         tic_id,
@@ -94,6 +99,13 @@ for ii in np.arange(len(tois)):
 
     #Find semimajor axis
     arstar = transit_fitter._P_to_a_(toi.per)
+
+    #CDD debugging
+    print('stellar properties')
+    print('stellar mass: ', transit_fitter.M_star)
+    print('stellar radius: ', transit_fitter.R_star)
+    print('arstar: ', arstar)
+    #END CDD
 
     # initialize MCMC parameters
     theta_0 = dict(per=toi.per,
