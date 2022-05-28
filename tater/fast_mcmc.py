@@ -12,8 +12,11 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 #Default settings
+startii = 450 #first file to analyze
 verbose = True
 show_plots = False
+norepeats = True #don't re-fit TOIs that have already been fit
+flip_order = True #anlyze TOIs in reverse order
 
 #Directories & Files
 tfile = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/targets_exofop_toi_properties.csv'
@@ -44,12 +47,18 @@ values = {"R_star": 1, "M_star": 1, "logg": 4.4374, "[Fe/H]": 0}
 tois = tois.fillna(value=values)
 
 #Loop through all TOIs! :)
-for ii in np.arange(len(tois)):
+for jj in np.arange(len(tois)):
+
+    if flip_order == False:
+        ii = len(tois) - jj - 1
+    else:
+        ii = jj
+
 #for ii in [3]:
     toi = tois.iloc[ii]
     tic_id = int(toi.TIC)
 
-    print(ii, 'Fitting TOI ', toi.TIC, '(TIC '+str(tic_id)+')')
+    print(ii, 'Fitting TOI ', toi.TOI, '(TIC '+str(tic_id)+')')
 
     #Only fit planet candidates
     if toi['TFOPWG Disposition'] != 'PC':
@@ -61,8 +70,16 @@ for ii in np.arange(len(tois)):
     print('   ', outbase)
 
 #   #continue progress
-    if ii < 7:
+    if ii < startii:
         continue
+
+    #Check if TOI has already been fit and skip if norepeats=True
+    if norepeats == True:
+        if exists(outbase+'_planet_fit.csv'):
+            print('TOI '+str(toi.TOI)+ ' (TIC '+str(toi.TIC)+') already analyzed. Skipping.')
+            continue
+
+
 
     if tic_id == 355867695: #temporary workaround
         print('skipping TIC 355867695')
