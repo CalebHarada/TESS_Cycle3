@@ -1913,7 +1913,7 @@ class TransitFitter(object):
 
         # get flattened chain
 
-        nburn = int(np.floor((sampler.iteration)/2))
+        nburn = int(np.floor((sampler.iteration)/5))
         self.nburn = nburn
         flat_samples = sampler.get_chain(discard=nburn, flat=True)
 

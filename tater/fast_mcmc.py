@@ -12,11 +12,11 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 #Default settings
-startii = 450 #first file to analyze
+startii = 500 #450 #first file to analyze
 verbose = True
 show_plots = False
 norepeats = True #don't re-fit TOIs that have already been fit
-flip_order = True #anlyze TOIs in reverse order
+flip_order = False # True #anlyze TOIs in reverse order
 
 #Directories & Files
 tfile = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/targets_exofop_toi_properties.csv'
@@ -79,7 +79,9 @@ for jj in np.arange(len(tois)):
             print('TOI '+str(toi.TOI)+ ' (TIC '+str(toi.TIC)+') already analyzed. Skipping.')
             continue
 
-
+        if exists(outbase+'_emcee_samples.h5'):
+            print('TOI '+str(toi.TOI)+ ' (TIC '+str(toi.TIC)+') already has emcee samples h5 file. Skipping.')
+            continue
 
     if tic_id == 355867695: #temporary workaround
         print('skipping TIC 355867695')
