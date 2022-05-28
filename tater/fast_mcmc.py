@@ -51,12 +51,17 @@ for ii in np.arange(len(tois)):
 
     print(ii, 'Fitting TOI ', toi.TIC, '(TIC '+str(tic_id)+')')
 
+    #Only fit planet candidates
+    if toi['TFOPWG Disposition'] != 'PC':
+        print('Skipping. TOI disposition ', toi['TFOPWG Disposition'])
+        continue
+
     #Set output file base
     outbase = outdir+str(tic_id)+'_'+str(int(toi.TOI*100))
     print('   ', outbase)
 
 #   #continue progress
-    if ii < 0:
+    if ii < 7:
         continue
 
     if tic_id == 355867695: #temporary workaround
