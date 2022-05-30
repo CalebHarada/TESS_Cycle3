@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 #Default settings
-startii = 500 #450 #first file to analyze
+startii = 448 #450 #first file to analyze
 verbose = True
 show_plots = False
 norepeats = True #don't re-fit TOIs that have already been fit
@@ -49,7 +49,7 @@ tois = tois.fillna(value=values)
 #Loop through all TOIs! :)
 for jj in np.arange(len(tois)):
 
-    if flip_order == False:
+    if flip_order == True:
         ii = len(tois) - jj - 1
     else:
         ii = jj
@@ -129,6 +129,7 @@ for jj in np.arange(len(tois)):
     print('stellar mass: ', transit_fitter.M_star)
     print('stellar radius: ', transit_fitter.R_star)
     print('arstar: ', arstar)
+    print('u1, u2: ', transit_fitter.u1, transit_fitter.u2)
     #END CDD
 
     # initialize MCMC parameters
@@ -138,6 +139,8 @@ for jj in np.arange(len(tois)):
                    a_rs=max(1, arstar),
                    b=0.1
                    )
+
+    print('theta_0: ', theta_0)
 
     #Normalize each transit & trim lightcurve to near transit
     time, flux, flux_err = transit_fitter._renorm_flux_(toi)
