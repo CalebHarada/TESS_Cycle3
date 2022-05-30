@@ -1534,7 +1534,7 @@ class TransitFitter(object):
 
         return lc
 
-    def _get_limb_darkening_params_(self):
+    def _get_limb_darkening_params_(self, verbose=False):
         """Helper function that interpolates LD coeffs from table
         LD source: https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
         """
@@ -1544,7 +1544,57 @@ class TransitFitter(object):
         ld_points = np.array([ld_table["logg"], ld_table["Teff"], ld_table["Z"]]).T
         ld_values = np.array([ld_table["aLSM"], ld_table["bLSM"]]).T
         ld_interpolator = LinearNDInterpolator(ld_points, ld_values)
-        self.u1, self.u2 = ld_interpolator(self.logg, self.Teff, self.Fe_H)
+
+        #If any input values are out of range, use the closest value in the interpolation grid.
+        #If the interpolator is given a value outside of the covered parameter space, it will return NaN.
+
+        uselogg = self.logg
+        useteff = self.Teff
+        usefeh = self.Fe_H
+
+        #Check whether input parameters are in bounds and adjust if needed
+        if uselogg > max(ld_table['logg']):
+            uselogg = max(ld_table['logg'])
+            if verbose:
+                print('requested logg higher than LD interpolation grid')
+                print('Requested: ', self.logg)
+                print('Using: ', uselogg)
+
+        if uselogg < min(ld_table['logg']):
+            uselogg = min(ld_table['logg'])
+            if verbose:
+                print('requested logg lower than LD interpolation grid')
+                print('Requested: ', self.logg)
+                print('Using: ', uselogg)
+        if useteff > max(ld_table['Teff']):
+            useteff = max(ld_table['Teff'])
+            if verbose:
+                print('requested Teff higher than LD interpolation grid')
+                print('Requested: ', self.Teff)
+                print('Using: ', useteff)
+        if useteff < min(ld_table['Teff']):
+            useteff = min(ld_table['Teff'])
+            if verbose:
+                print('requested Teff lower than LD interpolation grid')
+                print('Requested: ', self.Teff)
+                print('Using: ', useteff)
+        if usefeh > max(ld_table['Z']):
+            usefeh = max(ld_table['Z'])
+            if verbose:
+                print('requested Fe/H higher than LD interpolation grid')
+                print('Requested: ', self.Fe_H)
+                print('Using: ', usefeh)
+        if usefeh < min(ld_table['Z']):
+            usefeh = min(ld_table['Z'])
+            if verbose:
+                print('requested Fe/H lower than LD interpolation grid')
+                print('Requested: ', self.Fe_H)
+                print('Using: ', usefeh)
+
+        self.u1, self.u2 = ld_interpolator(uselogg, useteff, usefeh)
+
+        print('params used to estimate limb darkening: ', self.logg, self.Teff, self.Fe_H)
+        print('resulting limb darkening: ', self.u1, self.u2)
 
         return
 
