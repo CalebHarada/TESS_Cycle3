@@ -137,9 +137,9 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 100
-        self.nsteps = 50000 #maximum number of steps allowed
-        self.nsteps_used = 50000 #number of steps actually used when emcee finished
-        self.nburn = 10000
+        self.nsteps = 40000 #maximum number of steps allowed
+        self.nsteps_used = 40000 #number of steps actually used when emcee finished
+        self.nburn = 8000
 
         self.injection_recovery_results = None
 
@@ -238,7 +238,7 @@ class TransitFitter(object):
 
         return nsec_found
 
-    def use_local_data(self, ddir = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/', show_plot=False):
+    def use_local_data(self, toi_num, ddir = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/', show_plot=False):
             """Function to load local lightcurve data
 
             @param show_plot: show plot of raw and flattened LC
@@ -250,7 +250,8 @@ class TransitFitter(object):
 
             # load lightcurve
             ticnumber = self.tic_id[4:]
-            lcfile = ddir + str(ticnumber)+'_lightcurve_detrended.csv'
+            lcfile = ddir + str(ticnumber)+'_'+str(int(toi_num*100))+'_lightcurve_detrended.csv'
+
 
             print('looking for file ', lcfile)
             if not exists(lcfile):

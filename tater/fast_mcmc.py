@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 #Default settings
-startii =100 #450 #first file to analyze
+startii =300 #450 #first file to analyze
 verbose = True
 show_plots = False
 norepeats = True #don't re-fit TOIs that have already been fit
@@ -114,7 +114,7 @@ for jj in np.arange(len(tois)):
         )
 
     # load data
-    nsec_found = transit_fitter.use_local_data(
+    nsec_found = transit_fitter.use_local_data(toi.TOI
     )
 
     if nsec_found <= 0:
