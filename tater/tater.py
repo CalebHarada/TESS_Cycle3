@@ -137,9 +137,9 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 100
-        self.nsteps = 20000 #maximum number of steps allowed
-        self.nsteps_used = 20000 #number of steps actually used when emcee finished
-        self.nburn = 5000
+        self.nsteps = 50000 #maximum number of steps allowed
+        self.nsteps_used = 50000 #number of steps actually used when emcee finished
+        self.nburn = 10000
 
         self.injection_recovery_results = None
 

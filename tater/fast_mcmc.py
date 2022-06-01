@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 #Default settings
-startii = 448 #450 #first file to analyze
+startii =100 #450 #first file to analyze
 verbose = True
 show_plots = False
 norepeats = True #don't re-fit TOIs that have already been fit
@@ -43,7 +43,7 @@ tois['rp_rs']= np.sqrt(tois.exofop_depth)
 
 #Fill in missing stellar parameters
 # solar logg is from Smalley et al. (2005)
-values = {"R_star": 1, "M_star": 1, "logg": 4.4374, "[Fe/H]": 0}
+values = {"Teff": 5777, "R_star": 1, "M_star": 1, "logg": 4.4374, "[Fe/H]": 0}
 tois = tois.fillna(value=values)
 
 #Loop through all TOIs! :)
@@ -65,6 +65,12 @@ for jj in np.arange(len(tois)):
         print('Skipping. TOI disposition ', toi['TFOPWG Disposition'])
         continue
 
+    #Skip TOIs with nonpositive periods
+    if toi.per <= 0:
+        print('Nonpositive period found for TOI ', toi.TIC, '(TIC '+str(tic_id)+')')
+        print('Skipping.')
+        continue
+
     #Set output file base
     outbase = outdir+str(tic_id)+'_'+str(int(toi.TOI*100))
     print('   ', outbase)
@@ -83,9 +89,9 @@ for jj in np.arange(len(tois)):
             print('TOI '+str(toi.TOI)+ ' (TIC '+str(toi.TIC)+') already has emcee samples h5 file. Skipping.')
             continue
 
-    if tic_id == 355867695: #temporary workaround
-        print('skipping TIC 355867695')
-        continue
+#    if tic_id == 355867695: #temporary workaround
+#        print('skipping TIC 355867695')
+#        continue
 
     #Stellar parameters
     wantcol = ['Teff','logg','R_star',
@@ -116,10 +122,6 @@ for jj in np.arange(len(tois)):
         print('Skipping.')
         continue
 
-    if toi.per <= 0:
-        print('Period is nonpositive found for TOI ', toi.TIC, '(TIC '+str(tic_id)+')')
-        print('Skipping.')
-        continue
 
     #Find semimajor axis
     arstar = transit_fitter._P_to_a_(toi.per)
