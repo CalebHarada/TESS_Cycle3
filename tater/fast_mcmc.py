@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 #Default settings
-startii =300 #450 #first file to analyze
+startii = 300 #450 #first file to analyze
 verbose = True
 show_plots = False
 norepeats = True #don't re-fit TOIs that have already been fit
@@ -20,6 +20,7 @@ flip_order = False # True #anlyze TOIs in reverse order
 
 #Directories & Files
 tfile = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/targets_exofop_toi_properties.csv'
+updated_per_t0_file = '/Users/courtney/Documents/data/toi_paper_data/updated_ephemerides/refined_transit_centers.csv'
 taterdir = '/Users/courtney/Documents/GitHub/TESS_Cycle3/tater/'
 outdir = '/Users/courtney/Documents/data/toi_paper_data/tater_mcmc_fits/'
 
@@ -36,10 +37,23 @@ def trim_to_transits(lc, toi,nfactor=3.):
 #Read list of TOIs in paper
 tois = pd.read_csv(tfile)
 
-#Change column names
-tois['per'] = tois.exofop_per
-tois['T0'] = tois.exofop_t0
+#Look for updated ephemerides
+uppert0 = pd.read_csv(updated_per_t0_file)
+
+#Merge updated per & t0 values into TOIs dataframe
+tois = pd.merge(tois,uppert0,how='left', on='TOI',suffixes=('','_updated'))
+
+#Make new columns to store adopted initial period & t0
+tois['per'] = tois['per_updated']
+tois['T0'] = tois['T0_updated']
+
+#Replace NaNs using values from ExoFOP
+tois.per.fillna(tois.exofop_per, inplace=True)
+tois.T0.fillna(tois.exofop_t0, inplace=True)
+
+#Determine planet/star radius ratio from transit depth
 tois['rp_rs']= np.sqrt(tois.exofop_depth)
+
 
 #Fill in missing stellar parameters
 # solar logg is from Smalley et al. (2005)
