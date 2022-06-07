@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 #Default settings
-startii = 300 #450 #first file to analyze
+startii = 0 #450 #first file to analyze
 verbose = True
 show_plots = False
 norepeats = True #don't re-fit TOIs that have already been fit
@@ -74,8 +74,8 @@ for jj in np.arange(len(tois)):
 
     print(ii, 'Fitting TOI ', toi.TOI, '(TIC '+str(tic_id)+')')
 
-    #Only fit planet candidates
-    if toi['TFOPWG Disposition'] != 'PC':
+    #Only fit  planet candidates or ambiguous planet candidates
+    if np.logical_and(toi['TFOPWG Disposition'] != 'PC',toi['TFOPWG Disposition'] != 'APC'):
         print('Skipping. TOI disposition ', toi['TFOPWG Disposition'])
         continue
 
