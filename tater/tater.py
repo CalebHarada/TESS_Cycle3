@@ -91,7 +91,9 @@ class TransitFitter(object):
 
         # initialize stellar params
         self.R_star = None
+        self.R_star_uncert = None
         self.M_star = None
+        self.M_star_uncert = None
         self.logg = None
         self.Teff = None
         self.Fe_H = None
@@ -676,11 +678,11 @@ class TransitFitter(object):
             # Get TLS power spectrum; use stellar params
             tls_results = tls.power(
                 R_star=self.R_star.value,
-                R_star_min=max(0.07,self.R_star.value - 0.3),  # kind of arbitrary for now?
-                R_star_max=self.R_star.value + 0.3,
+                R_star_min=max(0.07, self.R_star.value - self.R_star_uncert.value),  # set min and max stellar values to 1-sigma uncertainties from MAST
+                R_star_max=self.R_star.value + self.R_star_uncert.value,
                 M_star=self.M_star.value,
-                M_star_min=max(0.07,self.M_star.value - 0.3),
-                M_star_max=self.M_star.value + 0.3,
+                M_star_min=max(0.07, self.M_star.value - self.M_star_uncert.value),
+                M_star_max=self.M_star.value + self.M_star_uncert.value,
                 u=[self.u1, self.u2],
                 period_max=period_max,
                 period_min=period_min, use_threads=1
@@ -1453,6 +1455,17 @@ class TransitFitter(object):
                 print("   Solar value of 'R_star' used instead: 1 R_sun.")
                 self.R_star = 1. * u.R_sun
 
+        # stellar radius uncert
+        self.R_star_uncert = tic_table["e_rad"] * u.R_sun
+        if not np.isfinite(self.R_star_uncert.value):
+            print("   Could not locate valid 'R_star_uncert'.")
+            missing += ['R_star_uncert']
+            if ask_user:
+                self.R_star_uncert = self._ask_user_("R_star_uncert [R_sun]", limits=(0, 1000)) * u.R_sun
+            elif assume_solar:
+                print("   Solar value of 'R_star' used instead: assuming uncert of 0.1 R_sun.")
+                self.R_star_uncert = 0.1 * u.R_sun
+
         # stellar mass
         self.M_star = tic_table["mass"] * u.M_sun
         if not np.isfinite(self.M_star.value):
@@ -1463,6 +1476,17 @@ class TransitFitter(object):
             elif assume_solar:
                 print("   Solar value of 'M_star' used instead: 1 M_sun.")
                 self.M_star = 1. * u.M_sun
+
+        # stellar mass uncert
+        self.M_star_uncert = tic_table["e_mass"] * u.M_sun
+        if not np.isfinite(self.M_star_uncert.value):
+            print("   Could not locate valid 'M_star_uncert'.")
+            missing += ['M_star_uncert']
+            if ask_user:
+                self.M_star_uncert = self._ask_user_("M_star_uncert [M_sun]", limits=(0, 1000)) * u.M_sun
+            elif assume_solar:
+                print("   Solar value of 'M_star' used instead: assuming uncert of 0.1 M_sun.")
+                self.M_star_uncert = 0.1 * u.M_sun
 
         # stellar surface gravity
         self.logg = tic_table["logg"]
