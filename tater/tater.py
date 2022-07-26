@@ -60,7 +60,7 @@ plt.rcParams.update({'figure.max_open_warning': 0})
 class TransitFitter(object):
     """Main class for TATER"""
 
-    def __init__(self, tic_id, auto_params=False, ask_user=False, assume_solar=False):
+    def __init__(self, tic_id, auto_params=False, ask_user=False, assume_solar=False, preloaded_stellar_params=False,stellar_params=None):
         """Initialization
 
         @param tic_id: TIC ID number
@@ -74,7 +74,14 @@ class TransitFitter(object):
 
         @param assume_solar: fill in solar estimates for missing MAST values (ignored if auto_params=False or ask_user=True)
         @type assume_solar: bool (default=False)
+
+        @param preloaded_stellar_params: stellar parameters already downloaded and saved to file
+        @type preloaded_stellar_params: bool (default=False)
+
+        @param stellar_params: Pandas data frame containing stellar parameters
+        @type stellar_param_file: Pandas DataFrame
         """
+
 
         # check user input
         if (not isinstance(tic_id, int)) | (tic_id <= 0):
@@ -98,6 +105,16 @@ class TransitFitter(object):
         self.u1 = None
         self.u2 = None
 
+        if preloaded_stellar_params == True:
+            self.R_star = stellar_params.R_star*u.R_sun
+            self.M_star = stellar_params.M_star*u.M_sun
+            self.logg = stellar_params.logg
+            self.Teff = stellar_params.Teff
+            self.Fe_H = stellar_params['[Fe/H]']
+
+            #Get u1, u2 from other parameters
+            self._get_limb_darkening_params_()
+
         # option to automatically get stellar params from MAST
         self.missing = []
         if auto_params:
@@ -120,8 +137,9 @@ class TransitFitter(object):
         # initialize MCMC options
         self.ndim = len(self.labels)
         self.nwalkers = 100
-        self.nsteps = 350
-        self.nburn = 250
+        self.nsteps = 40000 #maximum number of steps allowed
+        self.nsteps_used = 40000 #number of steps actually used when emcee finished
+        self.nburn = 8000
 
         self.injection_recovery_results = None
 
@@ -220,7 +238,7 @@ class TransitFitter(object):
 
         return nsec_found
 
-    def use_local_data(self, ddir = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/', show_plot=False):
+    def use_local_data(self, toi_num, ddir = '/Users/courtney/Documents/data/toi_paper_data/triceratops_tess_lightcurves/', show_plot=False):
             """Function to load local lightcurve data
 
             @param show_plot: show plot of raw and flattened LC
@@ -232,7 +250,9 @@ class TransitFitter(object):
 
             # load lightcurve
             ticnumber = self.tic_id[4:]
-            lcfile = ddir + str(ticnumber)+'_lightcurve_detrended.csv'
+            lcfile = ddir + str(ticnumber)+'_'+str(int(toi_num*100))+'_lightcurve_detrended.csv'
+
+
             print('looking for file ', lcfile)
             if not exists(lcfile):
                 print('no file found for '+str(self.tic_id))
@@ -284,8 +304,8 @@ class TransitFitter(object):
 
     def find_planets(self, time=None, flux=None, flux_err=None,
         max_iterations=7, tce_threshold=8.0,
-        period_min=0.5, period_max=100, show_plots=False, save_results=True):
-        """Function to identify transits using TLS, then perform model fit with MCMC
+        period_min=0.5, period_max=100, show_plots=False):
+        """Function to identify transits using TLS
 
         @param time: time array
         @type time: numpy array (optional; default=None)
@@ -311,9 +331,6 @@ class TransitFitter(object):
         @param show_plots: show plots of periodogram and best TLS model
         @type show_plots: bool (optional; default=False)
 
-        @param save_results: save results of fit
-        @type save_results: bool (optional; default=True)
-
         @return self.planet_candidates: list of planet candidates
 
         """
@@ -336,8 +353,6 @@ class TransitFitter(object):
         ###### END TEST INJECTION AND RECOVERY ##################
         """
 
-
-
         TCEs,_ = self._tls_search_(max_iterations, tce_threshold,
                                  time=time, flux=flux, flux_err=flux_err,
                                  period_min=period_min, period_max=period_max,
@@ -352,7 +367,33 @@ class TransitFitter(object):
         if not len(TCEs) >= 1:
             raise ValueError("No TCEs were found.")
 
+        return self.TCEs
+
+    def run_mcmc(self, time=None, flux=None, flux_err=None,
+        show_plots=False, save_results=True):
+        """Function to perform model fit with MCMC
+
+        @param time: time array
+        @type time: numpy array (optional; default=None)
+
+        @param flux: flux array
+        @type flux: numpy array (optional; default=None)
+
+        @param flux_err: flux uncertainty array
+        @type flux_err: numpy array (optional; default=None)
+
+        @param show_plots: show plots of periodogram and best TLS model
+        @type show_plots: bool (optional; default=False)
+
+        @param save_results: save results of fit
+        @type save_results: bool (optional; default=True)
+
+        @return self.planet_candidates: list of planet candidates
+
+        """
+
         # do MCMC fit for each planet in candidate list
+        TCEs = self.TCEs
         for i, TCE in enumerate(TCEs):
 
             print("   Running MCMC for TCE with $P = {:.6f}$ days (SDE={:.6f})".format(TCE.period, TCE.SDE))
@@ -408,8 +449,14 @@ class TransitFitter(object):
                 print("   MCMC COMPLETE.")
                 print(" ")
 
-        return self.TCEs
+            #Save .csv containing transit fit parameters
+            tic_no = self.tic_id[4:]
+            save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+            output_base = "{}/tater_report_{}_0{}.pdf".format(save_to_path, tic_no, i + 1)
+            mcmcoutfile = output_base+'_mcmc_results.csv'
+            planet_fit.to_csv(mcmcoutfile,index=False)
 
+        return self.TCEs
 
     def vet_TCEs(self, save_results=True):
         """Function to perform vetting of TCEs (to promote to candidate)
@@ -665,7 +712,6 @@ class TransitFitter(object):
 
             # clean arrays for TLS, masking out out-of-transit flux
             new_time, new_flux, new_flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
-            print('just applied mask')
             # leave loop if previous TLS iterations have completely masked all data
             if len(time) == 0:
                 break
@@ -764,9 +810,7 @@ class TransitFitter(object):
             # mask the detected transit signal before next iteration of TLS
             # length of mask is 2.5 x the transit duration
             intransit += transit_mask(time, tls_results.period, 2.5 * tls_results.duration, tls_results.T0)
-            print('set intransit')
-            print('len(intransit)', len(intransit))
-            print('intransit.dtype', intransit.dtype)
+
             # make planet vetting figures
             # self._generate_vet_figures_(tls_results)
 
@@ -774,7 +818,6 @@ class TransitFitter(object):
             TCEs.append(tls_results)
 
         return TCEs,intransit
-
 
     def _get_intransit_flux_(self, tce_dict, msk=[]):
         """Helper function to extract and re-normalize in-transit flux
@@ -786,8 +829,7 @@ class TransitFitter(object):
         @param msk: previous transit mask
         @type msk: array
 
-        @return new_t, new_f, new_ferr: normalized in-transit time, flux, and uncert
-
+        @return new_t, new_f, new_ferr: normalized in-transit time, flux, and uncertainty
         """
 
         # get the individual transit times and transit duration to create mask
@@ -840,6 +882,78 @@ class TransitFitter(object):
 
         return new_t, new_f, new_ferr
 
+    def _renorm_flux_(self, toi, msk=[], ndur=3.):
+        """Helper function to extract and re-normalize in-transit flux
+        to save compute time for MCMC fit. Nearly identical to Caleb's _get_intransit_flux_
+        but takes toi as input rather than tce_dict and doesn't assume 2-min cadence.
+
+        @param toi: TOI properties dataframe entry
+        @type toi: row from Pandas dataframe
+
+        @param ndur: number of durations to keep on either side of transit
+        @type ndur: float
+
+        @return new_t, new_f, new_ferr: normalized in-transit time, flux, and uncert
+
+        """
+
+        #Find transit properties
+        t0 = toi.T0
+        per = toi.per
+        duration = toi.exofop_duration
+
+        #Determine transit times
+        pbefore = np.ceil((np.min(self.time_raw) - t0)/per)
+        pafter = np.ceil((np.max(self.time_raw) - t0)/per)
+        transit_times = np.arange(pbefore, pafter)*per + t0
+
+        # linear function we will use to re-normalize the flux
+        linear_func = lambda x, m, b: m * x + b
+
+        # initialize new arrays for time, flux and uncert
+        new_t = np.array([])
+        new_f = np.array([])
+        new_ferr = np.array([])
+
+        # create previous transit mask if none provided
+        if len(msk) == 0:
+            msk = np.zeros(len(self.time_raw), dtype=bool)
+
+        # normalize each transit individually
+        for t0 in transit_times:
+
+            # consider data within 3 x the transit duration of the central transit time
+            transit_msk = (self.time_raw[~msk] > t0 - ndur * duration) & (self.time_raw[~msk] < t0 + ndur * duration)
+
+            # we will normalize by the out-of-transit flux between
+            # 3x and 1.5x the transit duration away from the central transit time
+            pre_msk = (self.time_raw[~msk] > t0 - ndur * duration) & (self.time_raw[~msk] < t0 - (ndur/2.) * duration)
+            post_msk = (self.time_raw[~msk] < t0 + ndur * duration) & (self.time_raw[~msk] > t0 + (ndur/2.) * duration)
+            trend_msk = pre_msk | post_msk
+
+            # require at least N_min data points during, before, and after transit
+
+            #Determine cadence of observations from minimum spacing of times
+            cadence = np.min(np.abs(self.time_raw - np.roll(self.time_raw,1)))
+            N_min_sides = 0.8 * (1.5 * duration / cadence)   # 80% complete data
+            N_min_total = 0.7 * (6 * duration / cadence)   # 70% complete data
+            if (np.sum(pre_msk) > N_min_sides) & (np.sum(post_msk) > N_min_sides) & (np.sum(transit_msk) > N_min_total):
+
+                # fit linear model ("trend") to out-of-transit data
+                slope, intercept, _, _, _ = linregress(self.time_raw[~msk][trend_msk], self.f_raw[~msk][trend_msk])
+                y_trend = linear_func(self.time_raw[~msk][transit_msk], slope, intercept)
+
+                # normalize the transit by the linear trend; save to array
+                new_f = np.concatenate((new_f, self.f_raw[~msk][transit_msk] / y_trend))
+
+                # save transit time and uncert arrays
+                new_t = np.concatenate((new_t, self.time_raw[~msk][transit_msk]))
+                new_ferr = np.concatenate((new_ferr, self.ferr_raw[~msk][transit_msk] / self.f_raw[~msk][transit_msk]))
+
+        # clean arrays
+        new_t, new_f, new_ferr = cleaned_array(new_t, new_f, new_ferr)
+
+        return new_t, new_f, new_ferr
 
     def _vet_previous_planets_(self, TCE_list):
         """Helper function to do previous planet check defined by Zink+2020
@@ -1015,6 +1129,8 @@ class TransitFitter(object):
                 time_fold_odd = np.array([item for sublist in tfold_odd for item in sublist])
                 flux_fold_odd = flux_fold_odd[np.argsort(time_fold_odd)]
                 time_fold_odd = np.sort(time_fold_odd)
+
+
                 ax.errorbar(*self._resample_(time_fold_odd * 24, flux_fold_odd),
                             fmt='rx', fillstyle="none", elinewidth=1, zorder=200, alpha=0.7)
 
@@ -1419,12 +1535,75 @@ class TransitFitter(object):
 
         return lc
 
+    def _get_limb_darkening_params_(self, verbose=False):
+        """Helper function that interpolates LD coeffs from table
+        LD source: https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
+        """
+        Vizier.ROW_LIMIT = -1
+        ld_table = Vizier.get_catalogs("J/A+A/600/A30/table25")[0]
+        ld_table = ld_table[ld_table["xi"] == 2.0]
+        ld_points = np.array([ld_table["logg"], ld_table["Teff"], ld_table["Z"]]).T
+        ld_values = np.array([ld_table["aLSM"], ld_table["bLSM"]]).T
+        ld_interpolator = LinearNDInterpolator(ld_points, ld_values)
+
+        #If any input values are out of range, use the closest value in the interpolation grid.
+        #If the interpolator is given a value outside of the covered parameter space, it will return NaN.
+
+        uselogg = self.logg
+        useteff = self.Teff
+        usefeh = self.Fe_H
+
+        #Check whether input parameters are in bounds and adjust if needed
+        if uselogg > max(ld_table['logg']):
+            uselogg = max(ld_table['logg'])
+            if verbose:
+                print('requested logg higher than LD interpolation grid')
+                print('Requested: ', self.logg)
+                print('Using: ', uselogg)
+
+        if uselogg < min(ld_table['logg']):
+            uselogg = min(ld_table['logg'])
+            if verbose:
+                print('requested logg lower than LD interpolation grid')
+                print('Requested: ', self.logg)
+                print('Using: ', uselogg)
+        if useteff > max(ld_table['Teff']):
+            useteff = max(ld_table['Teff'])
+            if verbose:
+                print('requested Teff higher than LD interpolation grid')
+                print('Requested: ', self.Teff)
+                print('Using: ', useteff)
+        if useteff < min(ld_table['Teff']):
+            useteff = min(ld_table['Teff'])
+            if verbose:
+                print('requested Teff lower than LD interpolation grid')
+                print('Requested: ', self.Teff)
+                print('Using: ', useteff)
+        if usefeh > max(ld_table['Z']):
+            usefeh = max(ld_table['Z'])
+            if verbose:
+                print('requested Fe/H higher than LD interpolation grid')
+                print('Requested: ', self.Fe_H)
+                print('Using: ', usefeh)
+        if usefeh < min(ld_table['Z']):
+            usefeh = min(ld_table['Z'])
+            if verbose:
+                print('requested Fe/H lower than LD interpolation grid')
+                print('Requested: ', self.Fe_H)
+                print('Using: ', usefeh)
+
+        self.u1, self.u2 = ld_interpolator(uselogg, useteff, usefeh)
+
+        print('params used to estimate limb darkening: ', self.logg, self.Teff, self.Fe_H)
+        print('resulting limb darkening: ', self.u1, self.u2)
+
+        return
+
 
     def _get_stellar_params_(self, ask_user=False, assume_solar=False):
         """Helper function that loads stellar parameters from MAST and interpolates LD coeffs from table
         If no parameter found, asks user for input (unless ask_user=False, then function skips)
         If no parameter found and ask_user=False, solar values can be assumed (only if assume_solar=True)
-        LD source: https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
 
         @param ask_user: ask user to input info missing from MAST
         @type ask_user: bool (default=False)
@@ -1497,15 +1676,8 @@ class TransitFitter(object):
                 print("   Solar value of 'Fe_H' used instead: 0.")
                 self.Fe_H = 0.
 
-        # interpolate limb darkening coefficients
-        # LD table from https://ui.adsabs.harvard.edu/abs/2017A%26A...600A..30C/abstract
-        Vizier.ROW_LIMIT = -1
-        ld_table = Vizier.get_catalogs("J/A+A/600/A30/table25")[0]
-        ld_table = ld_table[ld_table["xi"] == 2.0]
-        ld_points = np.array([ld_table["logg"], ld_table["Teff"], ld_table["Z"]]).T
-        ld_values = np.array([ld_table["aLSM"], ld_table["bLSM"]]).T
-        ld_interpolator = LinearNDInterpolator(ld_points, ld_values)
-        self.u1, self.u2 = ld_interpolator(self.logg, self.Teff, self.Fe_H)
+        # limb _get_limb_darkening_params
+        self._get_limb_darkening_params_()
 
         # print stellar info
         self.star_info = dict(zip(
@@ -1668,9 +1840,9 @@ class TransitFitter(object):
 
         # set uniform priors
         if (theta_0["per"] - 0.1 < per < theta_0["per"] + 0.1) \
-                and (theta_0["t0"] - 0.083 < t0 < theta_0["t0"] + 0.083) \
+                and (theta_0["t0"] - 0.1 < t0 < theta_0["t0"] + 0.1) \
                 and (0.0 < rp < 0.3) \
-                and (max(1, 0.5 * theta_0["a_rs"]) < a < 10.0 * theta_0["a_rs"]) \
+                and (max(1, 0.25 * theta_0["a_rs"]) < a < 10.0 * theta_0["a_rs"]) \
                 and (0.0 < b < 1.0):
             prior = 0.0
 
@@ -1713,7 +1885,7 @@ class TransitFitter(object):
 
         return log_prob
 
-    def _execute_mcmc_(self, theta_0, t, f, f_err, show_plots=False):
+    def _execute_mcmc_(self, theta_0, t, f, f_err, show_plots=False, outbase='tater'):
         """Helper function to run MCMC
 
         @param theta_0: parameter vector (period, t0, rp, a, b)
@@ -1731,6 +1903,9 @@ class TransitFitter(object):
         @param show_plots: show MCMC plots
         @type show_plots: bool (optional; default=False)
 
+        @param outbase: path to save .h5 file containing mcmc results. Default is for files to be saved in working directory with the prefix 'tater'
+        @type outbase: string (optional; default='tater')
+
         @return results_df, walker_fig, corner_fig, best_fig, best_full_fig
 
         """
@@ -1741,17 +1916,58 @@ class TransitFitter(object):
         pos = np.array([theta_0["per"], theta_0["t0"], theta_0["rp_rs"], theta_0["a_rs"], theta_0["b"]]) \
               + 5e-5 * np.random.randn(self.nwalkers, self.ndim)
 
+        #Set up the backend.
+        filename = outbase+"_emcee_samples.h5"
+        backend = emcee.backends.HDFBackend(filename)
+        backend.reset(self.nwalkers, self.ndim)
+        #Clear it in case the file already exists
+
         # initialize sampler
         sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self._log_probability_,
-                                        args=(theta_0, t, f, f_err)
+                                        args=(theta_0, t, f, f_err),
+                                        backend=backend
                                         )
 
-        # run the MCMC
-        sampler.run_mcmc(pos, self.nsteps, progress=True)
+        # We'll track how the average autocorrelation time estimate changes
+        index = 0
+        autocorr = np.empty(self.nsteps)
 
-        # grab the chain
-        flat_samples = sampler.get_chain(discard=self.nburn, flat=True)
+        # This will be useful to testing convergence
+        old_tau = np.inf
+
+        # Now we'll sample for up to self.nsteps steps
+        for sample in sampler.sample(pos, iterations=self.nsteps, progress=True):
+            # Only check convergence every 100 steps
+            if sampler.iteration % 100:
+                continue
+
+            # Compute the autocorrelation time so far
+            # Using tol=0 means that we'll always get an estimate even
+            # if it isn't trustworthy
+            tau = sampler.get_autocorr_time(tol=0)
+            autocorr[index] = np.mean(tau)
+            index += 1
+
+            # Check convergence
+            converged = np.all(tau * 100 < sampler.iteration)
+            converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+            if converged:
+                break
+            old_tau = tau
+
+    #    # run the MCMC
+    #    sampler.run_mcmc(pos, self.nsteps, progress=True)
+
+        #Get chain and determine length
         samples = sampler.get_chain()
+        self.nsteps_used = sampler.iteration
+
+        # get flattened chain
+
+        nburn = int(np.floor((sampler.iteration)/5))
+        self.nburn = nburn
+        flat_samples = sampler.get_chain(discard=nburn, flat=True)
+
 
         # generate plots (option to display plots)
         if show_plots:
@@ -1863,6 +2079,14 @@ class TransitFitter(object):
 
         # get bin centers
         bin_centers = bin_edges[1:] - bin_width / 2
+
+        #Get rid of nans
+        wg = np.where(np.isnan(bin_means) == False)
+        bin_centers = bin_centers[wg]
+        bin_means = bin_means[wg]
+        bin_stds = bin_stds[wg]
+        bin_counts = bin_counts[wg]
+        bin_width = bin_width #[wg] constant bin widths, so bex is a scalar
 
         return bin_centers, bin_means, bin_stds / np.sqrt(bin_counts), bin_width / 2
 

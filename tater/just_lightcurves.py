@@ -18,7 +18,7 @@ verbose = True
 basedir = '/Users/courtney//Documents/data/toi_paper_data/'
 outdir = basedir+'tess_lightcurves/'
 
-targetlistfile = '/Users/courtney/Dropbox/reducing_shane/paper_targets.csv'
+targetlistfile = '/Users/courtney/Documents/data/toi_paper_data/paper_targets.csv'
 
 #Load list of TOIs and remove duplicates
 targets = pd.read_csv(targetlistfile)
