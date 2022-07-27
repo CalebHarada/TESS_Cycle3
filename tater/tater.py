@@ -2543,7 +2543,7 @@ class TransitFitter(object):
             # see if injected signal is recovered
             for i in range(max_iterations):
                 TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux,
-                                     flux_err=flux_err, mask=intransit, period_min=period*0.95, period_max=period*1.05, make_plots=make_plots, show_plots=show_plots)
+                                     flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
                                      #flux_err=flux_err, mask=intransit, make_plots=make_plots, show_plots=show_plots)
 
                 # stop searching if no TCEs found
@@ -2730,17 +2730,17 @@ class TransitFitter(object):
             if radii is not None:
                 assert len(radii) == N, 'radii not length N'
             else:
-                radii = np.random.uniform(radius_min,radius_max,N)/\
-                    (rsun_to_rearth*rstar)
+                radii = np.random.uniform(radius_min,radius_max,N)
 
             # calculate remaining needed parameters
+            rprs = radii / (rsun_to_rearth * rstar)
             ars = calc_ars(mstar,periods,rstar)
             asinis = np.sqrt(ars**2 - bs**2)
             incs = list(map(calc_inc,bs,asinis))
 
             # assemble parameters into single array
             thetas = np.array((baselines,q1s,q2s,
-                t0s,periods,radii,ars,incs)).T
+                t0s,periods,rprs,ars,incs)).T
 
             # helper function to map onto in order to perform injection/recovery
             def helper(theta,time=time,flux=flux,flux_err=flux_err):
