@@ -34,6 +34,7 @@ from wotan import flatten
 from tqdm import tqdm
 import pandas as pd
 from os.path import exists
+from astropy.timeseries import BoxLeastSquares
 
 
 # [...]
@@ -177,10 +178,7 @@ class TransitFitter(object):
         nsec_found = len(search_result)
 
         self.lc = search_result.download_all(quality_bitmask="default")
-        self.time_raw, self.f_raw, self.ferr_raw = np.concatenate([(sector.remove_nans().time.value,
-                                                                    sector.remove_nans().flux.value,
-                                                                    sector.remove_nans().flux_err.value
-                                                                    ) for sector in self.lc], axis=1)
+        self.time_raw, self.f_raw, self.ferr_raw = np.concatenate([(sector.remove_nans().time.value, sector.remove_nans().flux.value, sector.remove_nans().flux_err.value) for sector in self.lc], axis=1)
 
         # initialize light curve figure
         fig, axes = plt.subplots(2, 1,
@@ -212,7 +210,7 @@ class TransitFitter(object):
                 flux,                                   # Array of flux values
                 method='median',                        # median filter
                 window_length=window_size,              # The length of the filter window in units of ``time``
-                edge_cutoff=0.5,                        # length (in units of time) to be cut off each edge.
+                edge_cutoff=0.,                        # length (in units of time) to be cut off each edge.
                 break_tolerance=0.5,                    # Split into segments at breaks longer than that
                 return_trend=True                       # Return trend and flattened light curve
             )
@@ -642,7 +640,88 @@ class TransitFitter(object):
         np.savetxt(ttv_text_file, planet_dict.ttv_data, header="transit #, t0, uncert")
 
         return None
+    
+    def _bls_search_(self, max_iterations, time=None, flux=None, flux_err=None, mask=None, period_min=0.5, period_max=100):
+        """
+        Helper function to run TLS search for transits in light curve
+        
+        @param max_iterations: maximum number of search iterations
+        @type max_iterations: int
 
+        @param time: time array
+        @type time: numpy array (optional; default=None)
+
+        @param flux: flux array
+        @type flux: numpy array (optional; default=None)
+
+        @param flux_err: flux uncertainty array
+        @type flux_err: numpy array (optional; default=None)
+        
+        @param mask: in-transit boolean mask array
+        @type mask: numpy array (optional; default=None)
+
+        @param period_min: minimum orbital period for TLS to explore
+        @type period_min: float (optional; default=0.8)
+
+        @param period_max: maximum orbital period for TLS to explore
+        @type period_max: float (optional; default=100)
+
+        """
+
+         # copy time, flux, uncertainty arrays
+        if time is None:
+            time = self.time
+        if flux is None:
+            flux = self.f
+        if flux_err is None:
+            flux_err = self.f_err       
+
+        # set maximum period to search (if not given)
+        if period_max is None:
+            period_max = np.ptp(time) / 2  # require at least 2 transits
+
+        # initialize in-transit mask
+        if mask is None:
+            intransit = np.zeros(len(time), dtype="bool")
+        else:
+            intransit = mask
+        
+        # TCE list
+        TCEs = []
+
+        # do the BLS search. stop searching after at most max_iterations
+        for i in range(max_iterations):
+
+            # clean arrays for TLS, masking out out-of-transit flux
+            new_time, new_flux, new_flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
+            # leave loop if previous TLS iterations have completely masked all data
+            if len(time) == 0:
+                break
+
+            # Initialise BLS
+            bls = BoxLeastSquares(new_time, new_flux, dy=new_flux_err)
+            print ('bls initialised')
+            # Get BLS power spectrum
+            period_grid = bls.autoperiod(duration=0.2, minimum_period=period_min, maximum_period=period_max)
+            bls_results = bls.power(period_grid, 0.2, objective='snr')
+            max_power = np.argmax(bls_results.power)
+
+            print(f"TCE at $P = {bls_results.period[max_power]}$ days")
+            print(f"   Transit search iteration {i} done.")
+            print(" ")
+
+            # don't trust the TLS duration! (different cadences/data gaps can mess this up)
+            # instead, estimate from period and stellar density
+            bls_duration = self._estimate_duration_(bls_results.period[max_power])
+
+            # mask the detected transit signal before next iteration of TLS
+            # length of mask is 2.5 x the transit duration
+            intransit += transit_mask(time, bls_results.period[max_power], 2.5 * bls_duration, bls_results.transit_time[max_power])
+
+            # append bls results to TCE list
+            TCEs.append(bls_results)
+
+        return TCEs, intransit
 
     def _tls_search_(self, max_iterations, tce_threshold,
         time=None, flux=None, flux_err=None, mask=None,
@@ -713,7 +792,7 @@ class TransitFitter(object):
             # clean arrays for TLS, masking out out-of-transit flux
             new_time, new_flux, new_flux_err = cleaned_array(time[~intransit], flux[~intransit], flux_err[~intransit])
             # leave loop if previous TLS iterations have completely masked all data
-            if len(time) == 0:
+            if len(new_time) == 0:
                 break
 
             # initializes TLS
@@ -2456,7 +2535,7 @@ class TransitFitter(object):
         max_iterations=7, tce_threshold=8.0, make_plots=False, show_plots=False,
         raw_flux=True, window_size=3.0):
 
-        """Function to recover signals from light curve
+        """Function to recover signals from light curve using either TLS or BLS
 
         @param time: time array
         @type time: numpy array
@@ -2537,38 +2616,82 @@ class TransitFitter(object):
 
         # run TLS search only if ground truth model is preferred at 5 sigma (Dressing+2015)
         if delta_chi2 > 30.863:
+            print ("Ground truth model is preferred at 5 sigma")
             # mask previous transits
-            intransit = np.zeros(len(self.time_raw), dtype=bool)
+            intransit = np.zeros(len(self.time), dtype=bool)
 
             # see if injected signal is recovered
-            for i in range(max_iterations):
-                TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux,
-                                     flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
-                                     #flux_err=flux_err, mask=intransit, make_plots=make_plots, show_plots=show_plots)
+            # for i in range(max_iterations):
+            #Just check once
+            # print ("Searching for planet using BLS")
+            # TCEs, intransit = self._bls_search_(max_iterations=1, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5)
+            # print ('Checking recovery')
+            # #Check if BLS recovers the planet
+            # bls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
 
-                # stop searching if no TCEs found
-                if len(TCEs) == 0:
-                    break
+            # if not bls_recovery:
+            #     continue
+            
 
-                TCE = TCEs[0] # only run _tls_search_ one iteration at a time
+            # #Run TLS if either: no TCEs found, period too far from injected period, or phase difference too far from injected signal
+            # if not bls_recovery:
+            #     print ("Planet not recovered using BLS, trying with TLS.")                
+            print ('Searching for Planet with TLS')
+            TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
+                                #flux_err=flux_err, mask=intransit, make_plots=make_plots, show_plots=show_plots)
 
-                if abs(TCE.period - period) / TCE.period_uncertainty > 5:
-                    continue
+            tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
 
-		# fractional phase difference between injected and recovered T0
-                phase_diff = (abs(TCE.T0 - t0) % period) / period
-		# check both sides of phase difference
-                if min(phase_diff, abs(phase_diff - 1)) > t0_tolerance:
-                    continue
+            # if not tls_recovery:
+            #     continue    
 
-                if TCE.SDE < tce_threshold:
-                    continue
+            recovery = tls_recovery
+            # recovery = True
 
-                recovery = True
-
-                break
+            # break
 
         return recovery
+    
+    def _check_recovery_(self, TCEs, period, t0, t0_tolerance):
+        """
+        Helper function to see if a given planet is recovered using either TLS or BLS
+
+        @param TCEs: threshold crossing events 
+        @type TCEs: list
+
+        @param period: orbital period of signal to recover (units of days)
+        @type period: float
+
+        @param t0: transit time of signal to recover
+        @type t0: float
+
+        @param t0_tolerance: required t0 agreement of signal (as fraction of period)
+        @type t0_tolerance: float      
+        """
+
+        if len(TCEs) == 0:
+            return False
+        else:
+            TCE = TCEs[0]
+            # if abs(TCE.period[max_power] - period) / TCE.period_uncertainty > 5:
+            # For BLS case where TCE.period is an array of all the periods 
+            if isinstance(TCE.period, (list, np.ndarray)):
+                max_power = np.argmax(TCE.power)
+                #Since BLS doesn't have a good period unc measure, look 0.1d on each side
+                if abs(TCE.period[max_power]/period - 1) < 0.1:
+                    return False
+                # fractional phase difference between injected and recovered T0
+                phase_diff = (abs(TCE.transit_time[max_power] - t0) % period) / period
+            # For TLS case where TCE.period is a scalar of the period at max power already
+            if isinstance(TCE.period, (float, int)):
+                if abs(TCE.period - period) / TCE.period_uncertainty > 5:
+                    return False
+                phase_diff = (abs(TCE.T0 - t0) % period) / period
+            
+		    # check both sides of phase difference
+            if min(phase_diff, abs(phase_diff - 1)) > t0_tolerance:
+                return False
+            return True
 
 
     def _explore_(self, time, flux, flux_err, mstar, rstar,
