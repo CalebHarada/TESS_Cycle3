@@ -2531,7 +2531,7 @@ class TransitFitter(object):
         return np.array(flux * lc), lc
 
 
-    def _recover_(self, time, flux, flux_err, t0, period, ground_truth_model, t0_tolerance = 0.01,
+    def _recover_(self, time, flux, flux_err, t0, period, ground_truth_model, mode='turbo', t0_tolerance = 0.01,
         max_iterations=7, tce_threshold=8.0, make_plots=False, show_plots=False,
         raw_flux=True, window_size=3.0):
 
@@ -2554,6 +2554,9 @@ class TransitFitter(object):
 
         @param ground_truth_model: the ground truth injected transit model used for initial SNR heuristic
         @type ground_truth_model: array
+
+        @param mode: mode of recovery to use, options are a) TLS only "tls", b) try BLS first and if it fails try TLS "combo", c) BLS only "turbo"
+        @type mode: str
 
         @param t0_tolerance: required t0 agreement of signal (as fraction of period)
         @type t0_tolerance: float
@@ -2620,35 +2623,26 @@ class TransitFitter(object):
             # mask previous transits
             intransit = np.zeros(len(self.time), dtype=bool)
 
-            # see if injected signal is recovered
-            # for i in range(max_iterations):
-            #Just check once
-            # print ("Searching for planet using BLS")
-            # TCEs, intransit = self._bls_search_(max_iterations=1, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5)
-            # print ('Checking recovery')
-            # #Check if BLS recovers the planet
-            # bls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
+            if mode == 'turbo' or mode == 'combo':
+                bls_recovery = False
+                print ("Searching for planet using BLS")
+                TCEs, intransit = self._bls_search_(max_iterations=1, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5)
+                print ('Checking recovery')
+                #Check if BLS recovers the planet
+                bls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
+                recovery = bls_recovery
 
-            # if not bls_recovery:
-            #     continue
-            
+                if mode == 'combo' and not bls_recovery:
+                    print ("Planet not recovered using BLS, trying with TLS.") 
+                    TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
+                    tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
+                    recovery = tls_recovery
 
-            # #Run TLS if either: no TCEs found, period too far from injected period, or phase difference too far from injected signal
-            # if not bls_recovery:
-            #     print ("Planet not recovered using BLS, trying with TLS.")                
-            print ('Searching for Planet with TLS')
-            TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
-                                #flux_err=flux_err, mask=intransit, make_plots=make_plots, show_plots=show_plots)
-
-            tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
-
-            # if not tls_recovery:
-            #     continue    
-
-            recovery = tls_recovery
-            # recovery = True
-
-            # break
+            elif mode == 'tls':
+                print ('Searching for Planet with TLS')
+                TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
+                tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance) 
+                recovery = tls_recovery
 
         return recovery
     
@@ -2673,7 +2667,6 @@ class TransitFitter(object):
             return False
         else:
             TCE = TCEs[0]
-            # if abs(TCE.period[max_power] - period) / TCE.period_uncertainty > 5:
             # For BLS case where TCE.period is an array of all the periods 
             if isinstance(TCE.period, (list, np.ndarray)):
                 max_power = np.argmax(TCE.power)
