@@ -2634,13 +2634,13 @@ class TransitFitter(object):
 
                 if mode == 'combo' and not bls_recovery:
                     print ("Planet not recovered using BLS, trying with TLS.") 
-                    TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
+                    TCEs,intransit = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
                     tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
                     recovery = tls_recovery
 
             elif mode == 'tls':
                 print ('Searching for Planet with TLS')
-                TCEs,intransit = self._tls_search_(max_iterations=1, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
+                TCEs,intransit = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
                 tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance) 
                 recovery = tls_recovery
 
