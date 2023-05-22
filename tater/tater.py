@@ -54,6 +54,11 @@ __status__ = " "
 # ignore plotting warning
 plt.rcParams.update({'figure.max_open_warning': 0})
 
+def unix_time(dt0):
+	epoch = datetime.datetime.utcfromtimestamp(0)
+	delta = dt0 - epoch
+	return delta.total_seconds()
+
 
 # </header>
 # Code begins here.
@@ -143,6 +148,12 @@ class TransitFitter(object):
         self.nburn = 8000
 
         self.injection_recovery_results = None
+
+        tic_no = self.tic_id[4:]
+        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        if not os.path.isdir(save_to_path):
+            os.mkdir(save_to_path)
+        self.time_audit_file = "{}/time_audit_{}.txt".format(save_to_path, tic_id)
 
     def download_data(self, window_size=3.0, n_sectors=None, show_plot=False, save_lc=True):
         """Function to download data with Lightkurve and flatten raw light curve
@@ -300,10 +311,13 @@ class TransitFitter(object):
             return 999 #just don't return 0
 
 
-    def find_planets(self, time=None, flux=None, flux_err=None,
+    def find_planets(self, mode='turbo', time=None, flux=None, flux_err=None,
         max_iterations=7, tce_threshold=8.0,
         period_min=0.5, period_max=100, show_plots=False):
         """Function to identify transits using TLS
+
+        @param mode: mode of recovery to use, options are a) TLS only "tls", b) try BLS first and if it fails try TLS "combo", c) BLS only "turbo"
+        @type mode: str
 
         @param time: time array
         @type time: numpy array (optional; default=None)
@@ -351,18 +365,42 @@ class TransitFitter(object):
         ###### END TEST INJECTION AND RECOVERY ##################
         """
 
-        TCEs,_ = self._tls_search_(max_iterations, tce_threshold,
-                                 time=time, flux=flux, flux_err=flux_err,
-                                 period_min=period_min, period_max=period_max,
-                                 show_plots=True) if show_plots \
-            else self._tls_search_(max_iterations, tce_threshold,
-                                   time=time, flux=flux, flux_err=flux_err,
-                                   period_min=period_min, period_max=period_max)
-
+        if mode == 'turbo' or mode == 'combo':
+            #bls_recovery = False
+            print ('Searching for Planet with BLS')
+            TCEs,_ = self._bls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold,
+                time=time, flux=flux, flux_err=flux_err,
+                period_min=period_min, period_max=period_max)
+            #Check if BLS recovers the planet
+            #bls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
+            #recovery = bls_recovery
+    
+        if mode == 'combo':
+            print ('Searching for Planet with TLS')
+            print ('WARNING: TLS & BLS TCEs not checked for overlap yet')
+            # TODO: check TLS/BLS overlap
+            new_TCEs,_ = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold,
+                time=time, flux=flux, flux_err=flux_err,
+                period_min=period_min, period_max=period_max,
+                show_plots=show_plots)
+            TCEs += new_TCEs
+            #tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
+            #recovery = tls_recovery
+    
+        elif mode == 'tls':
+            print ('Searching for Planet with TLS')
+            TCEs,_ = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold,
+                time=time, flux=flux, flux_err=flux_err,
+                period_min=period_min, period_max=period_max,
+                show_plots=show_plots)
+            #tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance) 
+            #recovery = tls_recovery
+    
         self.TCEs = TCEs
 
         # check whether any planets were found
         if not len(TCEs) >= 1:
+            print('No TCEs were found.')
             raise ValueError("No TCEs were found.")
 
         return self.TCEs
@@ -423,13 +461,16 @@ class TransitFitter(object):
                 print("    Insufficient in-transit data to execute MCMC. Continuing... \n")
                 continue
 
+            tic_no = self.tic_id[4:]
+            save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+
             # run the MCMC (option to show plots)
             if show_plots:
                 planet_fit, walker_fig, corner_fig, best_fig, best_full_fig = self._execute_mcmc_(
-                    theta_0, time, flux, flux_err, show_plots=True)
+                    theta_0, time, flux, flux_err, outbase=save_to_path+'/tater', show_plots=True)
             else:
                 planet_fit, walker_fig, corner_fig, best_fig, best_full_fig = self._execute_mcmc_(
-                    theta_0, time, flux, flux_err)
+                    theta_0, time, flux, flux_err, outbase=save_to_path+'/tater')
 
             # save figures to candidate object dictionary
             TCE.fit_results = planet_fit
@@ -448,10 +489,7 @@ class TransitFitter(object):
                 print(" ")
 
             #Save .csv containing transit fit parameters
-            tic_no = self.tic_id[4:]
-            save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
-            output_base = "{}/tater_report_{}_0{}.pdf".format(save_to_path, tic_no, i + 1)
-            mcmcoutfile = output_base+'_mcmc_results.csv'
+            mcmcoutfile = "{}/tater_report_{}_0{}_mcmc_results.csv".format(save_to_path, tic_no, i + 1)
             planet_fit.to_csv(mcmcoutfile,index=False)
 
         return self.TCEs
@@ -641,12 +679,18 @@ class TransitFitter(object):
 
         return None
     
-    def _bls_search_(self, max_iterations, time=None, flux=None, flux_err=None, mask=None, period_min=0.5, period_max=100):
+    def _bls_search_(self, max_iterations, tce_threshold, 
+        time=None, flux=None, flux_err=None, mask=None, 
+        period_min=0.5, period_max=100, 
+        make_plots=True, show_plots=False):
         """
         Helper function to run TLS search for transits in light curve
         
         @param max_iterations: maximum number of search iterations
         @type max_iterations: int
+
+        @param tce_threshold: Minimum Signal Detection Efficiency (SDE) that counts as a Threshold Crossing Event (TCE)
+        @type tce_threshold: float
 
         @param time: time array
         @type time: numpy array (optional; default=None)
@@ -665,6 +709,12 @@ class TransitFitter(object):
 
         @param period_max: maximum orbital period for TLS to explore
         @type period_max: float (optional; default=100)
+
+        @param make_plots: make plots of periodogram and best TLS model
+        @type make_plots: bool (optional; default=True)
+
+        @param show_plots: show plots of periodogram and best TLS model (only used if make_plots = True)
+        @type show_plots: bool (optional; default=False)
 
         """
 
@@ -702,21 +752,133 @@ class TransitFitter(object):
             bls = BoxLeastSquares(new_time, new_flux, dy=new_flux_err)
             print ('bls initialised')
             # Get BLS power spectrum
-            period_grid = bls.autoperiod(duration=0.2, minimum_period=period_min, maximum_period=period_max)
-            bls_results = bls.power(period_grid, 0.2, objective='snr')
-            max_power = np.argmax(bls_results.power)
+            before1 = unix_time(datetime.datetime.now())
+            #period_grid = bls.autoperiod(duration=0.2, minimum_period=period_min, maximum_period=period_max)
 
-            print(f"TCE at $P = {bls_results.period[max_power]}$ days")
-            print(f"   Transit search iteration {i} done.")
-            print(" ")
+
+            from transitleastsquares.grid import period_grid, duration_grid
+            periods = period_grid(
+                R_star=self.R_star.value,
+                M_star=self.M_star.value,
+                time_span=np.max(self.time) - np.min(self.time),
+                period_min=period_min,
+                period_max=period_max,
+                oversampling_factor=3, # TLS constant
+                n_transits_min=2, # TLS constant
+            )
+
+            durations = duration_grid(
+                periods, shortest=1 / len(self.time), log_step=1.1 # TLS constant
+            )
+
+
+            #bls_results = bls.power(period_grid, 0.2, objective='snr')
+            bls_results = bls.power(periods, durations, objective='snr')
+            #import pdb; pdb.set_trace()
+            max_power = np.argmax(bls_results.power)
+            bls_results.periods = bls_results.period # overwrite 'period' name to match TLS 'periods' convention
+            bls_results.period = bls_results.periods[max_power] # update 'period' name to period with best TCE power
+            bls_results.T0 = bls_results.transit_time[max_power]
+
+            first_transit = (bls_results.T0 - min(self.time_raw)) % bls_results.period + min(self.time_raw)
+            last_transit  = max(self.time_raw) - (max(self.time_raw) - bls_results.T0) % bls_results.period
+            Ntransits = round((last_transit - first_transit) / bls_results.period) + 1 # count first AND last transit
+            transit_times = np.arange(Ntransits)*bls_results.period + first_transit
+            bls_results.transit_times = transit_times
+
+            bls_results.durations = bls_results.duration # overwrite 'duration' to 'durations' to make room for below line
+            bls_results.duration = bls_results.durations[max_power] # update 'duration' name to single duration with best TCE power
+            bls_results.depths = bls_results.depth # overwrite 'depth' name to 'depths' to save all depths
+            bls_results.depth = bls_results.depths[max_power] # update 'depth' name to depth with best TCE power
+            bls_results.rp_rs = np.sqrt(bls_results.depth)
+            bls_results.SDE = (max(bls_results.power) - np.mean(bls_results.power)) / np.std(bls_results.power)
+            after1 = unix_time(datetime.datetime.now())
+
+            print()
+            print()
+            print('BLS iteration #' + str(i) + ': ', after1 - before1, 's')
+            with open(self.time_audit_file,'a') as f:
+                f.write('BLS iteration #' + str(i) + ': ' + str(after1 - before1) + ' s\n')
+            print()
+            print()
+
+            # check whether TCE threshold is reached
+            if round(bls_results.SDE) <= tce_threshold:
+
+                # stop searching if there are no more TCEs
+                print(f"   No additional TCEs found above SDE={tce_threshold}.")
+                print("   TRANSIT SEARCH COMPLETE.")
+                print(" ")
+                break
+
+            else:
+                print("   TCE at $P = {:.6f}$ days (SDE = {:.6f})".format(bls_results.period, bls_results.SDE))
+                print(f"   Transit search iteration {i} done.")
+                print(" ")
 
             # don't trust the TLS duration! (different cadences/data gaps can mess this up)
             # instead, estimate from period and stellar density
-            bls_duration = self._estimate_duration_(bls_results.period[max_power])
+            bls_duration = self._estimate_duration_(bls_results.periods[max_power])
+
+            if make_plots:
+                # initialize periodogram figure
+                fig1, ax1 = plt.subplots(1, 1, figsize=(12, 8))
+                ax1.set_xlim([bls_results.periods.min(), bls_results.periods.max()])
+                ax1.set_xlabel("period (days)")
+                ax1.set_ylabel("power")
+                ax1.set_title("Peak at {:.4f} days (SDE = {:.4f})".format(bls_results.period, bls_results.SDE))
+
+                # label TCE threshold, best period
+                ax1.axhline(tce_threshold, ls="--", c="r", alpha=0.6)
+                ax1.axvline(bls_results.period, alpha=0.2, lw=6, c="b")
+
+                # label alias periods
+                for j in range(2, 15):
+                    ax1.axvline(bls_results.period * j, alpha=0.2, lw=1, c="b", ls='--')
+                    ax1.axvline(bls_results.period / j, alpha=0.2, lw=1, c="b", ls='--')
+
+                # plot periodogram
+                ax1.plot(bls_results.periods, bls_results.power, 'k-', lw=1)
+
+                # initialize TLS transit model figure
+                fig2, ax2 = plt.subplots(1, 1, figsize=(12, 8))
+                ax2.set_title("BLS transit model (preliminary)")
+                ax2.set_xlim([-bls_results.duration*24, bls_results.duration*24])
+                ax2.set_xlabel("phase (hrs)")
+                ax2.set_ylabel("relative flux")
+
+                # create a batman model using the initial BLS parameters
+                bls_model = self._model_single_transit_(t=new_time,
+                                                        t0=bls_results.T0,
+                                                        per=bls_results.period,
+                                                        rp=bls_results.rp_rs,
+                                                        a=self._P_to_a_(bls_results.period)
+                                                        )
+
+                # fold model and data
+                phase = (new_time - bls_results.T0 + 0.5 * bls_results.period) % bls_results.period - 0.5 * bls_results.period
+                bls_model = bls_model[np.argsort(phase)]
+                f_fold = new_flux[np.argsort(phase)]
+                phase = np.sort(phase)
+
+                # plot folded data and TLS transit model
+                ax2.scatter(phase * 24, f_fold, s=1, c='k', rasterized=True)
+                ax2.plot(phase * 24, bls_model, "b-", lw=3)
+
+                # option to show plots
+                if show_plots:
+                    plt.ion(), plt.show(), plt.pause(0.001)
+
+                # add "False Positive" keyword + plots to bls_results object
+                bls_results.periodogram_fig = fig1
+                bls_results.model_fig = fig2
+                bls_results.FP = "No"
+
+                plt.close()
 
             # mask the detected transit signal before next iteration of TLS
             # length of mask is 2.5 x the transit duration
-            intransit += transit_mask(time, bls_results.period[max_power], 2.5 * bls_duration, bls_results.transit_time[max_power])
+            intransit += transit_mask(time, bls_results.periods[max_power], 2.5 * bls_duration, bls_results.transit_time[max_power])
 
             # append bls results to TCE list
             TCEs.append(bls_results)
@@ -799,6 +961,8 @@ class TransitFitter(object):
             tls = transitleastsquares(new_time, new_flux, new_flux_err)
 
             # Get TLS power spectrum; use stellar params
+            before1 = unix_time(datetime.datetime.now())
+            #import pdb; pdb.set_trace()
             tls_results = tls.power(
                 R_star=self.R_star.value,
                 R_star_min=max(0.07,self.R_star.value - 0.3),  # kind of arbitrary for now?
@@ -811,6 +975,14 @@ class TransitFitter(object):
                 period_min=period_min, use_threads=1
                 #period_min=period_min#, use_threads=1
             )
+            after1 = unix_time(datetime.datetime.now())
+            print()
+            print()
+            print('TLS iteration #' + str(i) + ': ', after1 - before1, 's')
+            with open(self.time_audit_file,'a') as f:
+                f.write('TLS iteration #' + str(i) + ': ' + str(after1 - before1) + ' s\n')
+            print()
+            print()
 
             # check whether TCE threshold is reached
             if round(tls_results.SDE) <= tce_threshold:
@@ -913,6 +1085,13 @@ class TransitFitter(object):
 
         # get the individual transit times and transit duration to create mask
         transit_times = tce_dict.transit_times
+        #try:
+        #    transit_times = tce_dict.transit_times
+        #except AttributeError:
+        #    first_transit = (tce_dict.T0 - min(self.time_raw)) % tce_dict.period + min(self.time_raw)
+        #    last_transit  = max(self.time_raw) - (max(self.time_raw) - tce_dict.T0) % tce_dict.period
+        #    Ntransits = round((last_transit - first_transit) / tce_dict.period) + 1 # count first AND last transit
+        #    transit_times = np.arange(Ntransits)*tce_dict.period + first_transit
         duration = tce_dict.duration
 
         # linear function we will use to re-normalize the flux
@@ -1044,6 +1223,7 @@ class TransitFitter(object):
         @return vetted TCE list
 
         """
+        before1 = unix_time(datetime.datetime.now())
 
         print("   -> previous planet check:")
 
@@ -1090,6 +1270,14 @@ class TransitFitter(object):
             else:
                 print("      {}...FAIL.".format(i))
 
+        after1 = unix_time(datetime.datetime.now())
+        print()
+        print()
+        print('_vet_previous_planets_: ', after1 - before1, 's')
+        with open(self.time_audit_file,'a') as f:
+            f.write('_vet_previous_planets_: ' + str(after1 - before1) + ' s\n')
+        print()
+        print()
         return TCE_list
 
 
@@ -1103,6 +1291,7 @@ class TransitFitter(object):
         @return vetted TCE list
 
         """
+        before1 = unix_time(datetime.datetime.now())
 
         print("   -> odd vs even transit test:")
 
@@ -1297,6 +1486,14 @@ class TransitFitter(object):
             TCE_list[i].tdepths_fig = tdepths_fig
             plt.close()
 
+        after1 = unix_time(datetime.datetime.now())
+        print()
+        print()
+        print('_vet_odd_oven_: ', after1 - before1, 's')
+        with open(self.time_audit_file,'a') as f:
+            f.write('_vet_odd_even_: ' + str(after1 - before1) + ' s\n')
+        print()
+        print()
         return TCE_list
 
 
@@ -1309,6 +1506,7 @@ class TransitFitter(object):
         @return vetted TCE list
 
         """
+        before1 = unix_time(datetime.datetime.now())
 
         print("   -> straight line test:")
 
@@ -1440,6 +1638,14 @@ class TransitFitter(object):
             TCE_list[i].line_test_fig = fig
             plt.close()
 
+        after1 = unix_time(datetime.datetime.now())
+        print()
+        print()
+        print('_vet_line_test_: ', after1 - before1, 's')
+        with open(self.time_audit_file,'a') as f:
+            f.write('_vet_line_test_: ' + str(after1 - before1) + ' s\n')
+        print()
+        print()
         return TCE_list
 
 
@@ -2030,6 +2236,7 @@ class TransitFitter(object):
             # Check convergence
             converged = np.all(tau * 100 < sampler.iteration)
             converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+            break
             if converged:
                 break
             old_tau = tau
@@ -2626,7 +2833,10 @@ class TransitFitter(object):
             if mode == 'turbo' or mode == 'combo':
                 bls_recovery = False
                 print ("Searching for planet using BLS")
-                TCEs, intransit = self._bls_search_(max_iterations=1, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5)
+                TCEs, intransit = self._bls_search_(max_iterations=max_iterations, tce_shreshold=tce_threshold, 
+                                                    time=time, flux=flux, flux_err=flux_err, mask=intransit, 
+                                                    period_min=period*0.5, period_max=period*1.5,
+                                                    make_plots=make_plots, show_plots=show_plots)
                 print ('Checking recovery')
                 #Check if BLS recovers the planet
                 bls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
@@ -2634,13 +2844,19 @@ class TransitFitter(object):
 
                 if mode == 'combo' and not bls_recovery:
                     print ("Planet not recovered using BLS, trying with TLS.") 
-                    TCEs,intransit = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
+                    TCEs,intransit = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, 
+                                                       time=time, flux=flux, flux_err=flux_err, mask=intransit, 
+                                                       period_min=period*0.5, period_max=period*1.5, 
+                                                       make_plots=make_plots, show_plots=show_plots)
                     tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance)
                     recovery = tls_recovery
 
             elif mode == 'tls':
                 print ('Searching for Planet with TLS')
-                TCEs,intransit = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold, time=time, flux=flux, flux_err=flux_err, mask=intransit, period_min=period*0.5, period_max=period*1.5, make_plots=make_plots, show_plots=show_plots)
+                TCEs,intransit = self._tls_search_(max_iterations=max_iterations, tce_threshold=tce_threshold,
+                                                   time=time, flux=flux, flux_err=flux_err, mask=intransit, 
+                                                   period_min=period*0.5, period_max=period*1.5, 
+                                                   make_plots=make_plots, show_plots=show_plots)
                 tls_recovery = self._check_recovery_(TCEs,period, t0, t0_tolerance) 
                 recovery = tls_recovery
 

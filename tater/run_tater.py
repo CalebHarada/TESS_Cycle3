@@ -3,12 +3,19 @@ import matplotlib
 matplotlib.use('agg')
 import sys
 import tater
+import datetime as dt
+import os
 
 inject_recover = False
 verbose = False
 
 # choose a planet
 #tic_ids = [43647325]  # WASP-35 b
+
+def unix_time(dt0):
+	epoch = dt.datetime.utcfromtimestamp(0)
+	delta = dt0 - epoch
+	return delta.total_seconds()
 
 if len(sys.argv) > 1:
 	tic_ids = sys.argv[1:]
@@ -24,21 +31,46 @@ else:
 	sys.exit()
 
 for i,tic_id in enumerate(tic_ids):
+	save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_id)
+	if not os.path.isdir(save_to_path):
+		os.mkdir(save_to_path)
+	time_audit_file = "{}/time_audit_{}.txt".format(save_to_path, tic_id)
+	with open(time_audit_file,'w') as f:
+		f.write( 'Time audit of ' + str(tic_id) + '\n')
+
 	print('TIC ' + str(tic_id) + ', ' + str(i+1) + ' of ' + str(len(tic_ids)))
 	# initialize TATER class
+	before1 = unix_time(dt.datetime.now())
 	transit_fitter = tater.TransitFitter(
 		tic_id,
 		auto_params=True,  # automatically find stellar params on MAST  (default: false)
 		ask_user=False, # do not ask user for input (default: false)
 		assume_solar=True # fill in solar values if not found on MAST (default: false)
 		)
+	after1 = unix_time(dt.datetime.now())
+	print()
+	print()
+	print('TATER class initialization: ', after1 - before1, 's')
+	with open(time_audit_file,'a') as f:
+		f.write( 'TATER class initialization: ' + str(after1 - before1) + ' s\n')
+	print()
+	print()
 
 	# download data and show plot
+	before1 = unix_time(dt.datetime.now())
 	nsec_found = transit_fitter.download_data(
 		window_size=3.0,
 		#n_sectors=1,  # number of TESS sectors to load (default: all)
 		show_plot=False  # option to show light curve (default: false)
 		)
+	after1 = unix_time(dt.datetime.now())
+	print()
+	print()
+	print('Data download ', after1 - before1, 's')
+	with open(time_audit_file,'a') as f:
+		f.write( 'Data download: ' + str(after1 - before1) + ' s\n')
+	print()
+	print()
 
 	if nsec_found == 0:
 		if verbose == True:
@@ -47,24 +79,52 @@ for i,tic_id in enumerate(tic_ids):
 	# search for planets and save results
 	if not inject_recover:
 		# find planets
+		before1 = unix_time(dt.datetime.now())
 		planets = transit_fitter.find_planets(
+			mode='turbo', # 'tls' for TLS only, 'turbo' for BLS only, 'combo' for BLS and then TLS if BLS fails
 			max_iterations=4,  # maximum number of search iterations (default: 7)
-			tce_threshold=8.0,  # Minimum SDE that counts as a TCE (default: 8.0)
+			tce_threshold=4.0,  # Minimum SDE that counts as a TCE (default: 8.0)
 			period_min=0.8, # Minimum TLS period to explore
 			show_plots=False,  # option to show periodogram and transit model (default: false)
 			)
+		after1 = unix_time(dt.datetime.now())
+		print()
+		print()
+		print('transit_fitter.find_planets() ', after1 - before1, 's')
+		with open(time_audit_file,'a') as f:
+			f.write( 'transit_fitter.find_planets(): ' + str(after1 - before1) + ' s\n')
+		print()
+		print()
 
 		#Run MCMC fits
+		before1 = unix_time(dt.datetime.now())
 		planets = transit_fitter.run_mcmc(
 				show_plots=False,  # option to show periodogram and transit model (default: false)
 				save_results = True  # save all results to PDF/txt files (default: true)
 				)
+		after1 = unix_time(dt.datetime.now())
+		print()
+		print()
+		print('transit_fitter.run_mcmc() ', after1 - before1, 's')
+		with open(time_audit_file,'a') as f:
+			f.write( 'transit_fitter.run_mcmc(): ' + str(after1 - before1) + ' s\n')
+		print()
+		print()
 
+		before1 = unix_time(dt.datetime.now())
 		if len(transit_fitter.TCEs) >= 1:
 			# do vetting
 			transit_fitter.vet_TCEs(
 				save_results=True  # save all results to PDF/txt files (default: true)
 			)
+		after1 = unix_time(dt.datetime.now())
+		print()
+		print()
+		print('transit_fitter.vet_TCEs() ', after1 - before1, 's')
+		with open(time_audit_file,'a') as f:
+			f.write( 'transit_fitter.vet_TCEs(): ' + str(after1 - before1) + ' s\n')
+		print()
+		print()
 
 	# or run injection and recovery
 	else:
