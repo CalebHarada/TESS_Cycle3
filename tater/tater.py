@@ -401,7 +401,7 @@ class TransitFitter(object):
         # check whether any planets were found
         if not len(TCEs) >= 1:
             print('No TCEs were found.')
-            raise ValueError("No TCEs were found.")
+            #raise ValueError("No TCEs were found.")
 
         return self.TCEs
 

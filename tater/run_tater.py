@@ -83,7 +83,7 @@ for i,tic_id in enumerate(tic_ids):
 		planets = transit_fitter.find_planets(
 			mode='turbo', # 'tls' for TLS only, 'turbo' for BLS only, 'combo' for BLS and then TLS if BLS fails
 			max_iterations=4,  # maximum number of search iterations (default: 7)
-			tce_threshold=4.0,  # Minimum SDE that counts as a TCE (default: 8.0)
+			tce_threshold=8.0,  # Minimum SDE that counts as a TCE (default: 8.0)
 			period_min=0.8, # Minimum TLS period to explore
 			show_plots=False,  # option to show periodogram and transit model (default: false)
 			)
@@ -95,6 +95,8 @@ for i,tic_id in enumerate(tic_ids):
 			f.write( 'transit_fitter.find_planets(): ' + str(after1 - before1) + ' s\n')
 		print()
 		print()
+		if not len(transit_fitter.TCEs) >= 1:
+			continue # No TCEs found, move to next TIC ID
 
 		#Run MCMC fits
 		before1 = unix_time(dt.datetime.now())
