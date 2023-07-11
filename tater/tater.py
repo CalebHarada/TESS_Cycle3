@@ -859,6 +859,14 @@ class TransitFitter(object):
                 # plot periodogram
                 ax1.plot(bls_results.periods, bls_results.power, 'k-', lw=1)
 
+                # directory to save results to
+                tic_no = self.tic_id[4:]
+                save_to_path = "{}/BLS_full_run_outputs/{}".format(os.getcwd(), tic_no)
+                if not os.path.isdir(save_to_path):
+                    os.mkdir(save_to_path)
+                periodogram_file = "{}/periodogram_{}_{}.txt".format(save_to_path, tic_no, i)
+                np.savetxt(periodogram_file,np.array((bls_results.periods,bls_results.power)).T, delimiter=',',header='period,bls_power')
+
                 # initialize TLS transit model figure
                 fig2, ax2 = plt.subplots(1, 1, figsize=(12, 8))
                 ax2.set_title("BLS transit model (preliminary)")
@@ -1040,6 +1048,14 @@ class TransitFitter(object):
 
                 # plot periodogram
                 ax1.plot(tls_results.periods, tls_results.power, 'k-', lw=1)
+
+                # directory to save results to
+                tic_no = self.tic_id[4:]
+                save_to_path = "{}/TLS_full_run_outputs/{}".format(os.getcwd(), tic_no)
+                if not os.path.isdir(save_to_path):
+                    os.mkdir(save_to_path)
+                periodogram_file = "{}/periodogram_{}_{}.txt".format(save_to_path, tic_no, i)
+                np.savetxt(periodogram_file,np.array((tls_results.periods,tls_results.power)).T, delimiter=',',header='period,tls_power')
 
                 # initialize TLS transit model figure
                 fig2, ax2 = plt.subplots(1, 1, figsize=(12, 8))
