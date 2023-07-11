@@ -112,14 +112,21 @@ class TransitFitter(object):
         self.u2 = None
 
         if preloaded_stellar_params == True:
-            self.R_star = stellar_params.R_star*u.R_sun
-            self.M_star = stellar_params.M_star*u.M_sun
-            self.logg = stellar_params.logg
-            self.Teff = stellar_params.Teff
-            self.Fe_H = stellar_params['[Fe/H]']
+            self.R_star = float(stellar_params.R_star)*u.R_sun
+            self.M_star = float(stellar_params.M_star)*u.M_sun
+            self.logg = float(stellar_params.logg)
+            self.Teff = float(stellar_params.Teff)
+            self.Fe_H = float(stellar_params['[Fe/H]'])
 
             #Get u1, u2 from other parameters
             self._get_limb_darkening_params_()
+
+            # print stellar info
+            self.star_info = dict(zip(
+                ["TIC ID", "R_star", "M_star", "logg", "Teff", "[Fe/H]", "u1", "u2"],
+                [self.tic_id, self.R_star, self.M_star, self.logg, self.Teff, self.Fe_H, self.u1, self.u2]
+            )
+            )
 
         # option to automatically get stellar params from MAST
         self.missing = []
@@ -150,7 +157,7 @@ class TransitFitter(object):
         self.injection_recovery_results = None
 
         tic_no = self.tic_id[4:]
-        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        save_to_path = "{}/BLS_full_run_outputs/{}".format(os.getcwd(), tic_no)
         if not os.path.isdir(save_to_path):
             os.mkdir(save_to_path)
         self.time_audit_file = "{}/time_audit_{}.txt".format(save_to_path, tic_id)
@@ -462,7 +469,7 @@ class TransitFitter(object):
                 continue
 
             tic_no = self.tic_id[4:]
-            save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+            save_to_path = "{}/BLS_full_run_outputs/{}".format(os.getcwd(), tic_no)
 
             # run the MCMC (option to show plots)
             if show_plots:
@@ -563,12 +570,12 @@ class TransitFitter(object):
         tic_no = self.tic_id[4:]
 
         # make output directory
-        outputs_directory = "{}/outputs".format(os.getcwd())
+        outputs_directory = "{}/BLS_full_run_outputs".format(os.getcwd())
         if not os.path.isdir(outputs_directory):
             os.mkdir(outputs_directory)
 
         # directory to save results to
-        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        save_to_path = "{}/BLS_full_run_outputs/{}".format(os.getcwd(), tic_no)
         if not os.path.isdir(save_to_path):
             os.mkdir(save_to_path)
 
@@ -636,12 +643,12 @@ class TransitFitter(object):
         tic_no = self.tic_id[4:]
 
         # make output directory
-        outputs_directory = "{}/outputs".format(os.getcwd())
+        outputs_directory = "{}/BLS_full_run_outputs".format(os.getcwd())
         if not os.path.isdir(outputs_directory):
             os.mkdir(outputs_directory)
 
         # directory to save results to
-        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        save_to_path = "{}/BLS_full_run_outputs/{}".format(os.getcwd(), tic_no)
         if not os.path.isdir(save_to_path):
             os.mkdir(save_to_path)
 
@@ -670,6 +677,7 @@ class TransitFitter(object):
 
             text_file.write("FP : {} \n".format(planet_dict.FP))
             text_file.write("Delta_chi2_straightline : {} (>30.863?) \n".format(planet_dict.delta_chi2))
+            text_file.write("p_best for Delta_chi2_straightline : {} \n".format(planet_dict.p_best_delta_chi2))
             text_file.write("Z_oddeven : {} (<5?) \n".format(planet_dict.Z_oddeven))
 
 
@@ -768,13 +776,24 @@ class TransitFitter(object):
             )
 
             durations = duration_grid(
-                periods, shortest=1 / len(self.time), log_step=1.1 # TLS constant
+                periods, shortest=1 / len(self.time), log_step=1.5 # TLS constant
             )
+
+            ###########
+            # test code to print out period and duration grid of both BLS and TLS:
+            ###########
+            period_grid = bls.autoperiod(duration=0.2, minimum_period=period_min, maximum_period=period_max)
+            print('TLS period   min, max, and count: ' + str(min(periods)) + ', ' + str(max(periods)) + ', ' + str(len(periods)))
+            print('TLS duration min, max, and count: ' + str(min(durations)) + ', ' + str(max(durations)) + ', ' + str(len(durations)))
+            print('BLS period   min, max, and count: ' + str(min(period_grid)) + ', ' + str(max(period_grid)) + ', ' + str(len(period_grid)))
+            print('BLS duration min, max, and count: 0.2, 0.2, 1 (THESE VALUES WERE IDENTICAL FOR ALL SYSTEMS)')
+            #import pdb; pdb.set_trace()
 
 
             #bls_results = bls.power(period_grid, 0.2, objective='snr')
             bls_results = bls.power(periods, durations, objective='snr')
             #import pdb; pdb.set_trace()
+
             max_power = np.argmax(bls_results.power)
             bls_results.periods = bls_results.period # overwrite 'period' name to match TLS 'periods' convention
             bls_results.period = bls_results.periods[max_power] # update 'period' name to period with best TCE power
@@ -1523,9 +1542,6 @@ class TransitFitter(object):
                                               2.5 * previous_tce.duration,
                                               previous_tce.T0)
 
-            # Only care about data near transits
-            time, flux, flux_err = self._get_intransit_flux_(TCE_list[i], msk=previous_intransit)
-
             # grab parameters from fit
             t0_best = TCE_list[i].fit_results["median"]["$T_0$"]
             p_best = TCE_list[i].fit_results["median"]["$P$"]
@@ -1533,110 +1549,121 @@ class TransitFitter(object):
             b_best = TCE_list[i].fit_results["median"]["$b$"]
             rp_best = TCE_list[i].fit_results["median"]["$r_p/R_*$"]
 
-            # phase to best period and t0
-            t_fold = (time - t0_best + 0.5 * p_best) % p_best - 0.5 * p_best
+            delta_chi2 = -np.inf
+            p_best_aliases = [p_best/5, p_best/4, p_best/3, p_best/2, 
+                p_best, p_best*2, p_best*3, p_best*4, p_best*5]
+            for p_best_alias in p_best_aliases:
+                # Only care about data near transits
+                time, flux, flux_err = self._get_intransit_flux_(TCE_list[i], msk=previous_intransit)
+    
+                # phase to best period and t0
+                t_fold = (time - t0_best + 0.5 * p_best_alias) % p_best_alias - 0.5 * p_best_alias
+    
+                # sort arrays by phase to have a single phased transit
+                # we can thus use p_best, not p_best_alias for batman
+                flux = flux[np.argsort(t_fold)]
+                flux_err = flux_err[np.argsort(t_fold)]
+                t_fold = np.sort(t_fold)
+    
+                # convert to inclination angle
+                inc = np.arccos(b_best / a_best) * (180 / np.pi)
+    
+                # batman model
+                params = batman.TransitParams()
+                params.t0 = 0  # time of inferior conjunction
+                params.per = p_best  # orbital period (NOT alias, to preserve correct transit shape)
+                params.rp = rp_best  # planet radius (in units of stellar radii)
+                params.a = a_best  # semi-major axis (in units of stellar radii)
+                params.inc = inc  # orbital inclination (in degrees)
+                params.ecc = 0.  # eccentricity
+                params.w = 90.  # longitude of periastron (in degrees)
+                params.u = [self.u1, self.u2]  # limb darkening coefficients []
+                params.limb_dark = "quadratic"  # limb darkening model
+                model = batman.TransitModel(params, t_fold)  # initializes model
+    
+                # flux from batman model
+                flux_m = model.light_curve(params)  # calculates light curve
+    
+                # compute residuals and chi2
+                resid_tmodel = flux - flux_m
+                chi2_tmodel = np.sum(resid_tmodel ** 2 / flux_err ** 2)
+    
+                # Now fit a straight line to the data
+                linear_func = lambda x, m, b: m * x + b
+                popt, _ = curve_fit(linear_func, t_fold, flux, [0, 1], sigma=flux_err)
+                flux_line = linear_func(t_fold, *popt)
+    
+                # compute residuals and chi2
+                resid_line = flux - flux_line
+                chi2_line = np.sum(resid_line**2 / flux_err**2)
+    
+                # test discrepancy significance
+                new_delta_chi2 = chi2_line - chi2_tmodel
+                if new_delta_chi2 > delta_chi2:
+                    delta_chi2 = new_delta_chi2
+                    TCE_list[i].delta_chi2 = delta_chi2
+                    TCE_list[i].p_best_delta_chi2 = p_best_alias
 
-            # sort arrays by phase
-            flux = flux[np.argsort(t_fold)]
-            flux_err = flux_err[np.argsort(t_fold)]
-            t_fold = np.sort(t_fold)
-
-            # set up figure for residuals
-            gridspec = dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
-            fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw=gridspec)
-
-            # select first axis for transit model residual plot
-            ax = axes[0]
-            ax.set_ylabel("transit model residuals")
-            ax.set_xlim([t_fold.min() * 24 + 0.75, t_fold.max() * 24 - 0.75])
-
-            # convert to inclination angle
-            inc = np.arccos(b_best / a_best) * (180 / np.pi)
-
-            # batman model
-            params = batman.TransitParams()
-            params.t0 = 0  # time of inferior conjunction
-            params.per = p_best  # orbital period
-            params.rp = rp_best  # planet radius (in units of stellar radii)
-            params.a = a_best  # semi-major axis (in units of stellar radii)
-            params.inc = inc  # orbital inclination (in degrees)
-            params.ecc = 0.  # eccentricity
-            params.w = 90.  # longitude of periastron (in degrees)
-            params.u = [self.u1, self.u2]  # limb darkening coefficients []
-            params.limb_dark = "quadratic"  # limb darkening model
-            model = batman.TransitModel(params, t_fold)  # initializes model
-
-            # flux from batman model
-            flux_m = model.light_curve(params)  # calculates light curve
-
-            # compute residuals and chi2
-            resid_tmodel = flux - flux_m
-            chi2_tmodel = np.sum(resid_tmodel ** 2 / flux_err ** 2)
-
-            # plot residuals for "best-fit" model
-            ax.errorbar(t_fold * 24, resid_tmodel, yerr=flux_err, fmt='k.', ms=1, alpha=0.1, rasterized=True)  # plot data
-            ax.plot(t_fold * 24, resid_tmodel, 'k.', ms=1, alpha=0.5, rasterized=True)
-
-            # plot binned residuals
-            ax.errorbar(*self._resample_(t_fold * 24, resid_tmodel), fmt='r.', fillstyle="none", elinewidth=1,
-                        zorder=200, label="binned transit model residual")
-
-            # set y limits
-            ax.set_ylim([-5 * np.std(resid_tmodel), 5 * np.std(resid_tmodel)])
-
-            # line at y=0
-            ax.axhline(0.0, color="b", alpha=0.75, label=r"$\chi^2 = {:.3f}$".format(chi2_tmodel))
-            ax.legend()
-
-            # Now fit a straight line to the data
-            linear_func = lambda x, m, b: m * x + b
-            popt, _ = curve_fit(linear_func, t_fold, flux, [0, 1], sigma=flux_err)
-            flux_line = linear_func(t_fold, *popt)
-
-            # compute residuals and chi2
-            resid_line = flux - flux_line
-            chi2_line = np.sum(resid_line**2 / flux_err**2)
-
-            # select second axis for straight line residual plot
-            ax = axes[1]
-            ax.set_ylabel("straight line residuals")
-            ax.set_xlabel("phase (hrs)")
-
-            # plot residuals for "best-fit" model
-            ax.errorbar(t_fold * 24, resid_line, yerr=flux_err, fmt='k.', ms=1, alpha=0.1,
-                        rasterized=True)  # plot data
-            ax.plot(t_fold * 24, resid_line, 'k.', ms=1, alpha=0.5, rasterized=True)
-
-            # plot binned residuals
-            ax.errorbar(*self._resample_(t_fold * 24, resid_line), fmt='r.', fillstyle="none", elinewidth=1,
-                        zorder=200, label="binned straight line residual")
-
-            # set y limits
-            ax.set_ylim([-5 * np.std(resid_line), 5 * np.std(resid_line)])
-
-            # line at y=0
-            ax.axhline(0.0, color="b", alpha=0.75, label=r"$\chi^2 = {:.3f}$".format(chi2_line))
-            ax.legend()
-
-            # test discrepancy significance
-            delta_chi2 = chi2_line - chi2_tmodel
-            TCE_list[i].delta_chi2 = delta_chi2
-
-            if delta_chi2 < 30.863:
-                fig.suptitle(r"$\Delta \chi^2$ = {:.3f} (FAIL)".format(delta_chi2))
-                if TCE_list[i].FP != "No":
-                    TCE_list[i].FP += ", straight_line"
-                else:
-                    TCE_list[i].FP = "straight_line"
-                print("      {}...FAIL.".format(i))
-
-            else:
-                fig.suptitle(r"$\Delta \chi^2$ = {:.3f} (PASS)".format(delta_chi2))
-                print("      {}...PASS.".format(i))
-
-            # save figure to TCE object
-            TCE_list[i].line_test_fig = fig
-            plt.close()
+                    # set up figure for residuals
+                    gridspec = dict(wspace=0.0, hspace=0.0, height_ratios=[1, 1])
+                    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw=gridspec)
+        
+                    # select first axis for transit model residual plot
+                    ax = axes[0]
+                    ax.set_ylabel("transit model residuals")
+                    ax.set_xlim([t_fold.min() * 24 + 0.75, t_fold.max() * 24 - 0.75])
+        
+                    # plot residuals for "best-fit" model
+                    ax.errorbar(t_fold * 24, resid_tmodel, yerr=flux_err, fmt='k.', ms=1, alpha=0.1, rasterized=True)  # plot data
+                    ax.plot(t_fold * 24, resid_tmodel, 'k.', ms=1, alpha=0.5, rasterized=True)
+        
+                    # plot binned residuals
+                    ax.errorbar(*self._resample_(t_fold * 24, resid_tmodel), fmt='r.', fillstyle="none", elinewidth=1,
+                                zorder=200, label="binned transit model residual")
+        
+                    # set y limits
+                    ax.set_ylim([-5 * np.std(resid_tmodel), 5 * np.std(resid_tmodel)])
+        
+                    # line at y=0
+                    ax.axhline(0.0, color="b", alpha=0.75, label=r"$\chi^2 = {:.3f}$".format(chi2_tmodel))
+                    ax.legend()
+        
+                    # select second axis for straight line residual plot
+                    ax = axes[1]
+                    ax.set_ylabel("straight line residuals")
+                    ax.set_xlabel("phase (hrs)")
+        
+                    # plot residuals for "best-fit" model
+                    ax.errorbar(t_fold * 24, resid_line, yerr=flux_err, fmt='k.', ms=1, alpha=0.1,
+                                rasterized=True)  # plot data
+                    ax.plot(t_fold * 24, resid_line, 'k.', ms=1, alpha=0.5, rasterized=True)
+        
+                    # plot binned residuals
+                    ax.errorbar(*self._resample_(t_fold * 24, resid_line), fmt='r.', fillstyle="none", elinewidth=1,
+                                zorder=200, label="binned straight line residual")
+        
+                    # set y limits
+                    ax.set_ylim([-5 * np.std(resid_line), 5 * np.std(resid_line)])
+        
+                    # line at y=0
+                    ax.axhline(0.0, color="b", alpha=0.75, label=r"$\chi^2 = {:.3f}$".format(chi2_line))
+                    ax.legend()
+                    
+                    if delta_chi2 < 30.863:
+                        fig.suptitle(r"$\Delta \chi^2$ = {:.3f} (FAIL), Period = {:.3f}".format(delta_chi2,p_best_alias))
+                        if TCE_list[i].FP != "No":
+                            TCE_list[i].FP += ", straight_line"
+                        else:
+                            TCE_list[i].FP = "straight_line"
+                        print("      {}...FAIL.".format(i))
+        
+                    else:
+                        fig.suptitle(r"$\Delta \chi^2$ = {:.3f} (PASS), Period = {:.3f}".format(delta_chi2,p_best_alias))
+                        print("      {}...PASS.".format(i))
+        
+                    # save figure to TCE object
+                    TCE_list[i].line_test_fig = fig
+                    plt.close()
 
         after1 = unix_time(datetime.datetime.now())
         print()
@@ -1976,7 +2003,7 @@ class TransitFitter(object):
         print("------------------------------")
 
         tic_no = self.tic_id[4:]
-        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        save_to_path = "{}/BLS_full_run_outputs/{}".format(os.getcwd(), tic_no)
         if not os.path.isdir(save_to_path):
             os.mkdir(save_to_path)
         missing_text_file = "{}/missing_data_{}.txt".format(save_to_path, tic_no)
@@ -2600,7 +2627,7 @@ class TransitFitter(object):
 
         # save directory
         tic_no = self.tic_id[4:]
-        save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_no)
+        save_to_path = "{}/BLS_full_run_outputs/{}".format(os.getcwd(), tic_no)
         if not os.path.isdir(save_to_path):
             os.mkdir(save_to_path)
 

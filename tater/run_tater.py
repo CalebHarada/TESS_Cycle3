@@ -31,7 +31,7 @@ else:
 	sys.exit()
 
 for i,tic_id in enumerate(tic_ids):
-	save_to_path = "{}/outputs/{}".format(os.getcwd(), tic_id)
+	save_to_path = "{}/BLS_full_run_outputs/{}".format(os.getcwd(), tic_id)
 	if not os.path.isdir(save_to_path):
 		os.mkdir(save_to_path)
 	time_audit_file = "{}/time_audit_{}.txt".format(save_to_path, tic_id)
@@ -41,11 +41,39 @@ for i,tic_id in enumerate(tic_ids):
 	print('TIC ' + str(tic_id) + ', ' + str(i+1) + ' of ' + str(len(tic_ids)))
 	# initialize TATER class
 	before1 = unix_time(dt.datetime.now())
+	'''
 	transit_fitter = tater.TransitFitter(
 		tic_id,
 		auto_params=True,  # automatically find stellar params on MAST  (default: false)
 		ask_user=False, # do not ask user for input (default: false)
 		assume_solar=True # fill in solar values if not found on MAST (default: false)
+		)
+	'''
+	import pandas as pd
+	import numpy as np
+	stellar_params_file = 'updated_stellar_properties_08jun2023.csv'
+	stellar_params_table = pd.read_csv(stellar_params_file)
+	stellar_params_row = stellar_params_table[stellar_params_table.TIC == tic_id].head(1) # first match only
+	stellar_params = pd.DataFrame(columns=['R_star', 'M_star', 'Teff', 'logg', '[Fe/H]'], index=range(1))
+	stellar_params.R_star = float(stellar_params_row.adopted_rad)
+	stellar_params.M_star = float(stellar_params_row.adopted_mass)
+	stellar_params.Teff = float(stellar_params_row.adopted_teff)
+	stellar_params.logg = float(stellar_params_row.adopted_logg)
+	stellar_params['[Fe/H]'] = float(stellar_params_row.MH)
+	# [Fe/H] is the least important, so we can fill in Solar value if otherwise undefined
+	if np.isnan(float(stellar_params['[Fe/H]'])):
+		stellar_params['[Fe/H]'] = 0. # Solar value of 'Fe_H' used instead: 0.
+	if np.isnan(float(stellar_params.R_star)) or np.isnan(float(stellar_params.M_star)) or \
+		np.isnan(float(stellar_params.Teff)) or np.isnan(float(stellar_params.logg)):
+		print('Skipping TIC ' + str(tic_id) + ': missing stellar parameters in ' + str(stellar_params_file))
+		continue # only run system if all stellar parameters present
+	transit_fitter = tater.TransitFitter(
+		tic_id,
+		auto_params=False,  # automatically find stellar params on MAST  (default: false)
+		ask_user=False, # do not ask user for input (default: false)
+		assume_solar=False, # fill in solar values if not found on MAST (default: false)
+		preloaded_stellar_params=True,
+		stellar_params=stellar_params
 		)
 	after1 = unix_time(dt.datetime.now())
 	print()
@@ -82,9 +110,10 @@ for i,tic_id in enumerate(tic_ids):
 		before1 = unix_time(dt.datetime.now())
 		planets = transit_fitter.find_planets(
 			mode='turbo', # 'tls' for TLS only, 'turbo' for BLS only, 'combo' for BLS and then TLS if BLS fails
-			max_iterations=4,  # maximum number of search iterations (default: 7)
+			max_iterations=7,  # maximum number of search iterations (default: 7)
 			tce_threshold=8.0,  # Minimum SDE that counts as a TCE (default: 8.0)
-			period_min=0.8, # Minimum TLS period to explore
+			#period_min=0.8, # Minimum TLS period to explore
+			period_min=0.4, # Minimum TLS period to explore
 			show_plots=False,  # option to show periodogram and transit model (default: false)
 			)
 		after1 = unix_time(dt.datetime.now())
